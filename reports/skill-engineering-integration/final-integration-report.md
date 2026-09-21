@@ -11,7 +11,7 @@ PASS_WITH_WARNINGS
 ## 版本与仓库
 
 - OpenSpace baseline：`38277815ed44a53d757973c2bc4454c3b6426698`
-- OpenSpace integration commit：`d1fad06a729112e5f2c08dff1a6eab4489929210`
+- OpenSpace integration commit：`6daa9594c198f1e952db1a79fa0dabb95cf9ddde`
 - skill-engineering locked commit：`a661def556963455ef07ee226df4f46093e808f9`
 - OpenSpace `origin`：`https://github.com/gushuomaster/OpenSpace.git`
 - OpenSpace `upstream`：`https://github.com/HKUDS/OpenSpace.git`

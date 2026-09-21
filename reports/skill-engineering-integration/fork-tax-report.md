@@ -11,12 +11,12 @@ git diff --name-status upstream/main...integration/skill-governance
 
 ## 集成 patch surface
 
-截至 `integration/skill-governance` 的 `d1fad06a729112e5f2c08dff1a6eab4489929210`，相对 `upstream/main` 的统计为：
+截至 `integration/skill-governance` 的 `6daa9594c198f1e952db1a79fa0dabb95cf9ddde`，相对 `upstream/main` 的统计为：
 
-- 修改/新增文件：28
-- 新增文件：15
+- 修改/新增文件：29
+- 新增文件：16
 - 修改文件：13
-- 代码和报告新增：1242 行，删除：3 行
+- 代码和报告新增：1306 行，删除：3 行
 - Adapter 新增目录：5 个 Python 文件
 - 冲突文件：0（本次未执行 upstream 同步合并）
 
