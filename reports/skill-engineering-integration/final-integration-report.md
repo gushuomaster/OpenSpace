@@ -41,8 +41,8 @@ PASS_WITH_WARNINGS
 
 - skill-engineering unit：`294 passed, 2 skipped`
 - skill-engineering quick validation：`Skill is valid!`
-- OpenSpace governance/skill/cloud/runtime focused：`85 passed`
-- OpenSpace tests excluding benchmarks：`107 passed, 1 failed`
+- OpenSpace governance/skill/cloud/runtime focused：`86 passed`
+- OpenSpace tests excluding benchmarks：`108 passed, 1 failed`
 - 已知失败：Windows 下既有 grounding 路径测试把 `/etc/...` 解析为 `C:\etc\...`，与本次集成无关。
 - OpenSpace benchmarks 未纳入：缺少可选 `harbor` 依赖。
 - Dashboard `npm run build`：成功；有既有 chunk size、Browserslist 和 npm audit 警告。

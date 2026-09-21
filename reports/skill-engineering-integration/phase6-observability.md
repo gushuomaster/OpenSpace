@@ -14,7 +14,7 @@
 
 ## 验证
 
-- `python -m pytest tests/skill_engine tests/cloud tests/runtime -q`：85 passed。
+- `python -m pytest tests/skill_engine tests/cloud tests/runtime -q`：86 passed。
 - `npm run build`（`apps/dashboard`）：TypeScript 和 Vite 构建成功；仅报告既有 chunk size、Browserslist 和 npm audit 警告。
 
 ## 限制
