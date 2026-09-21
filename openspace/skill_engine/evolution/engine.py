@@ -53,6 +53,7 @@ class EvolutionRunResult:
     candidates: list[Any] = field(default_factory=list)
     actions: list[Any] = field(default_factory=list)
     behavior_evals: list[SkillBehaviorEvalResult] = field(default_factory=list)
+    governance_results: list[Any] = field(default_factory=list)
     evolved_skill_records: list[Any] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
@@ -62,6 +63,7 @@ class EvolutionMutationOutcome:
     action: Any | None = None
     candidate: Any | None = None
     behavior_evals: list[SkillBehaviorEvalResult] = field(default_factory=list)
+    governance_result: Any | None = None
     blocked_reason: str | None = None
     errors: list[str] = field(default_factory=list)
 
@@ -86,6 +88,7 @@ class EvolutionEngine:
         validator: Any | None = None,
         behavior_evaluator: Any | None = None,
         committer: Any | None = None,
+        governance_adapter: Any | None = None,
         evolution_mode: str = "autonomous",
         behavior_eval_max_revisions: int = 2,
     ) -> None:
@@ -97,6 +100,7 @@ class EvolutionEngine:
         self.validator = validator
         self.behavior_evaluator = behavior_evaluator
         self.committer = committer
+        self.governance_adapter = governance_adapter
         self.evolution_mode = _normalize_evolution_mode(evolution_mode)
         self.behavior_eval_max_revisions = max(0, int(behavior_eval_max_revisions))
 
@@ -126,6 +130,7 @@ class EvolutionEngine:
         candidates: list[Any] = []
         actions: list[Any] = []
         behavior_evals: list[SkillBehaviorEvalResult] = []
+        governance_results: list[Any] = []
         evolved: list[Any] = []
         errors: list[str] = []
         packet: Any | None = None
@@ -221,6 +226,8 @@ class EvolutionEngine:
                 if mutation.candidate is not None:
                     candidates.append(mutation.candidate)
                 behavior_evals.extend(mutation.behavior_evals)
+                if mutation.governance_result is not None:
+                    governance_results.append(mutation.governance_result)
                 if mutation.errors:
                     errors.extend(mutation.errors)
                 action = mutation.committed_action
@@ -260,6 +267,7 @@ class EvolutionEngine:
                 candidates=candidates,
                 actions=actions,
                 behavior_evals=behavior_evals,
+                governance_results=governance_results,
                 evolved_skill_records=evolved,
                 errors=errors,
             )
@@ -275,6 +283,7 @@ class EvolutionEngine:
                 candidates=candidates,
                 actions=actions,
                 behavior_evals=behavior_evals,
+                governance_results=governance_results,
                 evolved_skill_records=evolved,
                 errors=errors,
             )
@@ -544,6 +553,63 @@ class EvolutionEngine:
                     errors=["missing_behavior_eval"],
                 )
 
+            governance_result = None
+            governance_adapter = self.governance_adapter
+            if governance_adapter is not None and bool(
+                getattr(governance_adapter, "enabled", True)
+            ):
+                try:
+                    governance_result = await _maybe_await(
+                        governance_adapter.evaluate(
+                            decision=decision,
+                            admission=admission,
+                            authoring=authoring_result,
+                            validation=validation_result,
+                            behavior_eval=behavior_result,
+                            action_packet=action_packet,
+                            job=job,
+                        )
+                    )
+                except Exception as exc:
+                    if bool(getattr(governance_adapter, "enforced", False)):
+                        candidate = await self._create_candidate(
+                            decision,
+                            admission,
+                            packet,
+                            job,
+                            reason="governance_evaluation_failed",
+                        )
+                        return EvolutionMutationOutcome(
+                            candidate=candidate,
+                            behavior_evals=behavior_evals,
+                            blocked_reason="governance_evaluation_failed",
+                            errors=[f"governance_evaluation_failed:{exc}"],
+                        )
+                    logger.warning("Governance shadow evaluation failed: %s", exc)
+                if governance_result is not None and bool(
+                    getattr(governance_adapter, "enforced", False)
+                ):
+                    gate_status = str(
+                        getattr(governance_result, "gate_status", "INCOMPLETE")
+                    ).upper()
+                    publish_authorized = bool(
+                        getattr(governance_result, "publish_authorized", False)
+                    )
+                    if gate_status != "PASS" or not publish_authorized:
+                        candidate = await self._create_candidate(
+                            decision,
+                            admission,
+                            packet,
+                            job,
+                            reason="governance_blocked",
+                        )
+                        return EvolutionMutationOutcome(
+                            candidate=candidate,
+                            behavior_evals=behavior_evals,
+                            governance_result=governance_result,
+                            blocked_reason="governance_blocked",
+                        )
+
             committer = self.committer
             if committer is None:
                 logger.warning("Evolution commit skipped: no committer available")
@@ -554,6 +620,11 @@ class EvolutionEngine:
             for name in ("commit", "apply"):
                 commit_method = getattr(committer, name, None)
                 if callable(commit_method):
+                    commit_kwargs = {}
+                    if governance_result is not None and _accepts_keyword(
+                        commit_method, "governance_result"
+                    ):
+                        commit_kwargs["governance_result"] = governance_result
                     action = await _maybe_await(
                         commit_method(
                             authoring_result,
@@ -561,11 +632,13 @@ class EvolutionEngine:
                             decision,
                             admission,
                             action_packet,
+                            **commit_kwargs,
                         )
                     )
                     return EvolutionMutationOutcome(
                         action=action,
                         behavior_evals=behavior_evals,
+                        governance_result=governance_result,
                     )
             if callable(committer):
                 action = await _maybe_await(
@@ -580,10 +653,12 @@ class EvolutionEngine:
                 return EvolutionMutationOutcome(
                     action=action,
                     behavior_evals=behavior_evals,
+                    governance_result=governance_result,
                 )
             return EvolutionMutationOutcome(
                 action=authoring_result,
                 behavior_evals=behavior_evals,
+                governance_result=governance_result,
             )
         return EvolutionMutationOutcome(
             behavior_evals=behavior_evals,
@@ -726,6 +801,7 @@ class EvolutionCommitter:
         registry: Any,
         trigger_store: Any | None = None,
         trigger_engine: Any | None = None,
+        governance_adapter: Any | None = None,
         backup_root: str | Path | None = None,
     ) -> None:
         self.evidence_store = evidence_store
@@ -733,6 +809,7 @@ class EvolutionCommitter:
         self.registry = registry
         self.trigger_store = trigger_store or getattr(trigger_engine, "store", None)
         self.trigger_engine = trigger_engine
+        self.governance_adapter = governance_adapter
         if backup_root is not None:
             self.backup_root = Path(backup_root).expanduser().resolve()
         else:
@@ -749,8 +826,46 @@ class EvolutionCommitter:
         decision: Any,
         admission: Any,
         action_packet: Any,
+        *,
+        governance_result: Any | None = None,
     ) -> EvolutionActionRecord:
         action_type = _commit_action_type(decision, _attr(authoring, "staged_edit"))
+        if self.governance_adapter is not None and governance_result is not None:
+            verify = getattr(self.governance_adapter, "verify_result_integrity", None)
+            if callable(verify):
+                integrity_failures = tuple(verify(governance_result, authoring))
+                if integrity_failures:
+                    from openspace.skill_engine.governance_adapter.errors import (
+                        GovernanceBlockedError,
+                    )
+
+                    raise GovernanceBlockedError(integrity_failures)
+        if self.governance_adapter is not None and bool(
+            getattr(self.governance_adapter, "enforced", False)
+        ):
+            governance_result = await _maybe_await(
+                self.governance_adapter.evaluate(
+                    decision=decision,
+                    admission=admission,
+                    authoring=authoring,
+                    validation=validation,
+                    action_packet=action_packet,
+                )
+            )
+            gate_status = str(
+                getattr(governance_result, "gate_status", "INCOMPLETE")
+            ).upper()
+            publish_authorized = bool(
+                getattr(governance_result, "publish_authorized", False)
+            )
+            if gate_status != "PASS" or not publish_authorized:
+                from openspace.skill_engine.governance_adapter.errors import (
+                    GovernanceBlockedError,
+                )
+
+                raise GovernanceBlockedError(
+                    tuple(getattr(governance_result, "reason_codes", ()))
+                )
         self._check_preconditions(
             authoring=authoring,
             validation=validation,

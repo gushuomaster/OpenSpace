@@ -196,6 +196,7 @@ class OpenSpaceConfig:
     evolution_triggers_enabled: bool = True
     evolution_engine_enabled: bool = True
     evolution_mode: str = "autonomous"  # audit_only | fix_only | autonomous
+    governance_mode: str = "shadow"  # off | shadow | enforced
     evolution_allow_single_observation_capture: bool = True
     skill_trust_promotion_min_independent_successes: int = 2
     evolution_final_drain_limit: int = 0
@@ -392,6 +393,14 @@ class OpenSpaceConfig:
         if self.evolution_mode not in {"audit_only", "fix_only", "autonomous"}:
             raise ValueError(
                 "evolution_mode must be one of: audit_only, fix_only, autonomous"
+            )
+        env_governance_mode = os.environ.get("OPENSPACE_GOVERNANCE_MODE")
+        if env_governance_mode:
+            self.governance_mode = env_governance_mode
+        self.governance_mode = self.governance_mode.strip().lower()
+        if self.governance_mode not in {"off", "shadow", "enforced"}:
+            raise ValueError(
+                "governance_mode must be one of: off, shadow, enforced"
             )
         env_final_drain_limit = os.environ.get("OPENSPACE_EVOLUTION_FINAL_DRAIN_LIMIT")
         if env_final_drain_limit is not None:

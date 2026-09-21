@@ -259,6 +259,23 @@ def create_app(
         items = get_audit().list_candidates(status=status, limit=limit)
         return jsonify({"items": items, "count": len(items), "status": status})
 
+    @app.route(f"{API_PREFIX}/evolution/governance", methods=["GET"])
+    def evolution_governance() -> Any:
+        gate_status = _str_arg("gate_status", "") or None
+        limit = _int_arg("limit", 100)
+        items = audit_evidence_store.list_governance_results(
+            gate_status=gate_status,
+            limit=limit,
+        )
+        return jsonify({"items": items, "count": len(items), "gate_status": gate_status})
+
+    @app.route(f"{API_PREFIX}/evolution/governance/<governance_id>", methods=["GET"])
+    def evolution_governance_detail(governance_id: str) -> Any:
+        payload = audit_evidence_store.load_governance_result(governance_id)
+        if payload is None:
+            abort(404, description=f"Unknown governance_id: {governance_id}")
+        return jsonify(payload)
+
     @app.route(f"{API_PREFIX}/evolution/review-items", methods=["GET"])
     def evolution_review_items() -> Any:
         limit = _int_arg("limit", 100)

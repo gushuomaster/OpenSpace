@@ -1742,6 +1742,43 @@ async def fix_skill(
         return _json_error(e, status="error")
 
 
+@mcp.tool()
+async def inspect_skill_governance(
+    governance_id: str | None = None,
+    gate_status: str | None = None,
+    limit: int = 20,
+) -> str:
+    """Inspect persisted governance evidence without changing lifecycle state."""
+
+    try:
+        openspace = await _get_openspace()
+        runtime = getattr(openspace, "runtime", None)
+        state = getattr(runtime, "state", None)
+        evidence_store = getattr(state, "evidence_store", None)
+        if evidence_store is None:
+            return _json_error("EvidenceStore is not initialized")
+        if governance_id:
+            result = evidence_store.load_governance_result(governance_id)
+            if result is None:
+                return _json_error(
+                    f"Unknown governance_id: {governance_id}",
+                    status="not_found",
+                )
+            return _json_ok(result)
+        return _json_ok(
+            {
+                "items": evidence_store.list_governance_results(
+                    gate_status=gate_status or None,
+                    limit=max(1, min(int(limit), 100)),
+                ),
+                "gate_status": gate_status,
+            }
+        )
+    except Exception as e:
+        logger.error("inspect_skill_governance failed: %s", e, exc_info=True)
+        return _json_error(e, status="error")
+
+
 def _manual_fix_result(
     outcomes: list[Any],
     *,
@@ -1813,6 +1850,7 @@ def _evolution_run_summary(outcome: Any) -> dict[str, Any]:
     admissions = list(getattr(outcome, "admissions", []) or [])
     candidates = list(getattr(outcome, "candidates", []) or [])
     actions = list(getattr(outcome, "actions", []) or [])
+    governance_results = list(getattr(outcome, "governance_results", []) or [])
     evolved = list(getattr(outcome, "evolved_skill_records", []) or [])
     return {
         "job_id": str(getattr(outcome, "job_id", "") or ""),
@@ -1885,6 +1923,10 @@ def _evolution_run_summary(outcome: Any) -> dict[str, Any]:
             str(getattr(item, "validation_id", "") or "")
             for item in actions
             if getattr(item, "validation_id", None)
+        ],
+        "governance_results": [
+            item.to_dict() if hasattr(item, "to_dict") else dict(item)
+            for item in governance_results
         ],
         "evolved_skill_ids": [
             str(getattr(item, "skill_id", "") or "")

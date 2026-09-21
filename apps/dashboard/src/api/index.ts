@@ -11,6 +11,7 @@ export type {
   EvolutionCandidate,
   EvolutionJob,
   EvolutionReviewItem,
+  GovernanceResult,
   OverviewResponse,
   PipelineStage,
   QualitySignalAuditRow,

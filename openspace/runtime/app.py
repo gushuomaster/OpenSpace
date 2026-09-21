@@ -641,6 +641,21 @@ class OpenSpaceRuntime:
                         exc,
                     )
 
+            governance_adapter = None
+            if self.state.evidence_store is not None:
+                from openspace.skill_engine.governance_adapter import GovernanceAdapter
+
+                governance_adapter = GovernanceAdapter(
+                    evidence_store=self.state.evidence_store,
+                    mode=getattr(config, "governance_mode", "shadow"),
+                )
+                logger.info(
+                    "✓ Governance adapter enabled (mode=%s, engine=%s@%s)",
+                    governance_adapter.mode.value,
+                    governance_adapter.engine.engine_name,
+                    governance_adapter.engine.engine_version,
+                )
+
             if getattr(config, "evolution_engine_enabled", False):
                 self.state.evolution_engine = EvolutionEngine(
                     packet_builder=self.state.packet_builder,
@@ -689,6 +704,7 @@ class OpenSpaceRuntime:
                         "evolution_behavior_eval_max_revisions",
                         2,
                     ),
+                    governance_adapter=governance_adapter,
                     evolution_mode=getattr(config, "evolution_mode", "autonomous"),
                 )
                 logger.info(
@@ -946,6 +962,7 @@ class OpenSpaceRuntime:
                                 skill_store=skill_store,
                                 registry=self.state.skill_registry,
                                 trigger_engine=self.state.trigger_engine,
+                                governance_adapter=governance_adapter,
                                 backup_root=(
                                     evolution_storage_root
                                     / ".openspace"
