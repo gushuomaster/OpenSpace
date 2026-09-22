@@ -12,7 +12,7 @@ NOT_READY
 
 - OpenSpace baseline：`38277815ed44a53d757973c2bc4454c3b6426698`
 - OpenSpace integration commit：`43a84446177b8dd4aec031588ff6b0ea7d09c668`
-- skill-engineering locked commit：`5a715f0487e94941b6494263e86e3b38a57bedfa`
+- skill-engineering locked commit：`2c7019c93f6b510b199b1a20c40ce4104ee79c68`
 - OpenSpace `origin`：`https://github.com/gushuomaster/OpenSpace.git`
 - OpenSpace `upstream`：`https://github.com/HKUDS/OpenSpace.git`
 - 长期集成分支：`integration/skill-governance`
@@ -39,7 +39,7 @@ NOT_READY
 
 ## 验证结果
 
-- skill-engineering unit：`446 passed, 2 skipped`
+- skill-engineering unit：`448 passed, 2 skipped`
 - skill-engineering quick validation：`Skill is valid!`
 - OpenSpace governance/skill/cloud/runtime focused：`88 passed`
 - OpenSpace tests excluding benchmarks：`110 passed, 1 failed`
