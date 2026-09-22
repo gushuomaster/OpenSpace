@@ -3,16 +3,16 @@
 ## 状态
 
 ```text
-PASS_WITH_WARNINGS
+NOT_READY
 ```
 
-当前不能声明 `ENFORCED_READY`、`INTEGRATION_COMPLETE` 或 `PRODUCTION_READY`：真实 Provider execution、完整真实 Skill dogfooding 和全量回归仍有明确缺口。
+当前不能声明 `ENFORCED_READY`、`INTEGRATION_COMPLETE` 或 `PRODUCTION_READY`：真实 Provider execution 超时，完整真实 Skill dogfooding 和崩溃恢复仍有明确缺口。详见 `enforcement-readiness-report.md`。
 
 ## 版本与仓库
 
 - OpenSpace baseline：`38277815ed44a53d757973c2bc4454c3b6426698`
-- OpenSpace integration commit：`6daa9594c198f1e952db1a79fa0dabb95cf9ddde`
-- skill-engineering locked commit：`a661def556963455ef07ee226df4f46093e808f9`
+- OpenSpace integration commit：`43a84446177b8dd4aec031588ff6b0ea7d09c668`
+- skill-engineering locked commit：`5a715f0487e94941b6494263e86e3b38a57bedfa`
 - OpenSpace `origin`：`https://github.com/gushuomaster/OpenSpace.git`
 - OpenSpace `upstream`：`https://github.com/HKUDS/OpenSpace.git`
 - 长期集成分支：`integration/skill-governance`
@@ -39,10 +39,10 @@ PASS_WITH_WARNINGS
 
 ## 验证结果
 
-- skill-engineering unit：`294 passed, 2 skipped`
+- skill-engineering unit：`446 passed, 2 skipped`
 - skill-engineering quick validation：`Skill is valid!`
-- OpenSpace governance/skill/cloud/runtime focused：`86 passed`
-- OpenSpace tests excluding benchmarks：`108 passed, 1 failed`
+- OpenSpace governance/skill/cloud/runtime focused：`88 passed`
+- OpenSpace tests excluding benchmarks：`110 passed, 1 failed`
 - 已知失败：Windows 下既有 grounding 路径测试把 `/etc/...` 解析为 `C:\etc\...`，与本次集成无关。
 - OpenSpace benchmarks 未纳入：缺少可选 `harbor` 依赖。
 - Dashboard `npm run build`：成功；有既有 chunk size、Browserslist 和 npm audit 警告。
@@ -52,4 +52,4 @@ PASS_WITH_WARNINGS
 - 尚未在真实 MCP 服务、Dashboard 浏览器会话和外部 Provider 上完成端到端 dogfooding。
 - 尚未验证真实进程崩溃后的重启恢复和线上并发 source mutation；当前只覆盖注入式回归。
 - OpenSpace 全量回归仍受一个既有 Windows 路径失败和 benchmark 可选依赖限制。
-- 下一步应在真实 Provider 与可控恢复环境中运行 Phase 7，并在确认差异收敛后再切换默认治理模式或宣称 `ENFORCED_READY`。
+- 下一步应在真实 Provider 与可控恢复环境中运行 Enforcement Readiness ER-001、ER-010、ER-011，并在确认差异收敛后再切换默认治理模式或宣称 `ENFORCED_READY`。
