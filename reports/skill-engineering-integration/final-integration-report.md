@@ -1,55 +1,67 @@
 # Final Integration Report
 
-## 状态
+## Final Status
 
 ```text
-NOT_READY
+ENFORCED_READY
 ```
 
-当前不能声明 `ENFORCED_READY`、`INTEGRATION_COMPLETE` 或 `PRODUCTION_READY`：真实 Provider execution 超时，完整真实 Skill dogfooding 和崩溃恢复仍有明确缺口。详见 `enforcement-readiness-report.md`。
+OpenSpace × skill-engineering 的 B1–B4 live enforcement closure 已在 clean pinned revisions 上通过。状态满足 `ENFORCED_READY`；这不自动开始 Production Rollout。
 
-## 版本与仓库
+## Versions and Repositories
 
-- OpenSpace baseline：`38277815ed44a53d757973c2bc4454c3b6426698`
-- OpenSpace integration commit：`43a84446177b8dd4aec031588ff6b0ea7d09c668`
-- skill-engineering locked commit：`2c7019c93f6b510b199b1a20c40ce4104ee79c68`
-- OpenSpace `origin`：`https://github.com/gushuomaster/OpenSpace.git`
-- OpenSpace `upstream`：`https://github.com/HKUDS/OpenSpace.git`
-- 长期集成分支：`integration/skill-governance`
-- 当前实现分支：`codex/integrate-skill-engineering`
-- skill-engineering 保持独立仓库；未复制源码、未使用 subtree/vendor、未向 upstream push。
+- OpenSpace current commit：`8a4c402308fbcd2df22d79cd08033837b73c36dd`
+- OpenSpace implementation branch：`codex/integrate-skill-engineering`
+- Long-term branch：`integration/skill-governance`
+- OpenSpace origin：`https://github.com/gushuomaster/OpenSpace.git`
+- OpenSpace upstream：`https://github.com/HKUDS/OpenSpace.git`
+- skill-engineering committed HEAD：`0c83c8e87356191a0ef36c5c0f5a3f262eebbe3c`
+- OpenSpace dependency pin：`0c83c8e87356191a0ef36c5c0f5a3f262eebbe3c`
+- Runtime Governance revision：`0c83c8e87356191a0ef36c5c0f5a3f262eebbe3c`
+- Target Skill repository baseline：`affc52ac74a069113682a86013300d7b00fc3fa3`
 
-## 架构结论
+未复制 `skill-engineering` 源码到 OpenSpace，未使用 subtree/vendor，依赖方向仍为 `OpenSpace → Thin Adapter → skill-engineering Public API`。
 
-- OpenSpace 继续拥有 DecisionRationale、EvidenceStore、EvolutionCandidateStore、Trust、Lineage 和 EvolutionCommitter。
-- `skill-engineering` 只通过中立 `GovernanceRequest` / `GovernanceResult` 提供治理判定，并记录 engine name/version/revision。
-- `openspace/skill_engine/governance_adapter/` 只负责映射、调用、结果持久化和错误转换；没有第二套 Provider、Candidate、Evidence 或 Committer。
-- 依赖方向为 `OpenSpace → Adapter → skill-engineering Public API`；未引入 OpenSpace runtime 到 skill-engineering。
-- `EvolutionCommitter` 仍是唯一 Active Skill mutation owner；Governance PASS 只产生授权，不直接 Apply 或提升 TRUSTED。
+## Architecture Ownership
 
-## 已交付能力
+- OpenSpace：Decision、Evidence、Candidate、Trust、Lineage、Commit status 与 Active Skill durable state authority。
+- skill-engineering：Capability Applicability、Provider Execution Evidence、Coverage、Deliverable Contract、Integrity 和 Publish Authorization。
+- Governance Adapter：contract/evidence/result translation 与 persistence bridge，不实现第二套 engine/store/committer。
+- EvolutionCommitter：唯一 Active Skill mutation owner；Authorization 不等于 Publication。
+- Governance PASS：提交后仍为 `PROVISIONAL`，不直接等于 `TRUSTED`。
 
-- 三种治理模式：`off`、`shadow`、`enforced`；`off` 已验证不调用、不记录治理。
-- Validation、Coverage、Integrity 分离；required capability `NOT_RUN` 会产生 `INCOMPLETE`。
-- Provider `available`、`selected`、`executed`、evidence validity 分离。
-- Deliverable Contract 缺失/不完整/失败会 fail closed；五文档声明但只生成 SRS 的 Golden Regression 已在 skill-engineering 独立测试覆盖。
-- GovernanceResult 写入 OpenSpace 现有 EvidenceStore，并暴露 evidence ref、MCP 只读诊断和 Dashboard 只读摘要。
-- Commit 前重新校验 source/candidate digest；变化时返回 typed `GovernanceBlockedError`。
-- 现有幂等、恢复、Trust Promotion 和 upload trust gate 保持不变。
+## Live Closure
 
-## 验证结果
+| Gate | Result | Evidence |
+|---|---|---|
+| B1 Large Real Provider | PASS | 五文档 `declared=5, verified=5, missing=0`；Governance PASS；authorized |
+| B2 Kill / Restart | PASS | 三个真实 crash point；false PASS/apply/stale replay 均为 0；commit interruption 进入 review |
+| B3 Shadow Full Evolution | PASS | PASS/BLOCKED/INCOMPLETE 均持久化且不阻断唯一 Committer |
+| B4 MCP Live Consistency | PASS | 两次真实 MCP stdio session 与 DB、Dashboard、Evolution Gate 一致 |
 
-- skill-engineering unit：`448 passed, 2 skipped`
-- skill-engineering quick validation：`Skill is valid!`
-- OpenSpace governance/skill/cloud/runtime focused：`88 passed`
-- OpenSpace tests excluding benchmarks：`110 passed, 1 failed`
-- 已知失败：Windows 下既有 grounding 路径测试把 `/etc/...` 解析为 `C:\etc\...`，与本次集成无关。
-- OpenSpace benchmarks 未纳入：缺少可选 `harbor` 依赖。
-- Dashboard `npm run build`：成功；有既有 chunk size、Browserslist 和 npm audit 警告。
+## B1 Defect Closure
 
-## 剩余风险 / 下一步
+- STP root cause：`implemented` 声明缺少公开入口端到端行为证据。
+- Registry/selector root cause：能力范围被两处手工维护，产生声明与可达性漂移。
+- Target fixes：公开 STP behavior regression；Registry 成为 selector 单一来源；`registered_only` 明确 `selection_scope=none`；五文档与 STD 语义对齐。
+- Governance fixes：digest schema 强制 64 位 SHA-256；`scope_conflicts` 使用 typed `blocking` 字段并删除关键词推断。
 
-- 尚未在真实 MCP 服务、Dashboard 浏览器会话和外部 Provider 上完成端到端 dogfooding。
-- 尚未验证真实进程崩溃后的重启恢复和线上并发 source mutation；当前只覆盖注入式回归。
-- OpenSpace 全量回归仍受一个既有 Windows 路径失败和 benchmark 可选依赖限制。
-- 下一步应在真实 Provider 与可控恢复环境中运行 Enforcement Readiness ER-001、ER-010、ER-011，并在确认差异收敛后再切换默认治理模式或宣称 `ENFORCED_READY`。
+## Verification
+
+```text
+skill-engineering: 459 passed, 2 skipped
+skill-engineering quick validation: Skill is valid!
+OpenSpace focused governance/runtime/cloud: 88 passed
+OpenSpace non-benchmark: 110 passed, 1 known baseline failure
+Dashboard build: PASS
+Target Skill: 263 passed, 1 skipped, 4 known baseline failures
+New regressions: 0
+```
+
+Known baselines：OpenSpace Windows `/etc/...` path mapping；Target `build/generated.c` fixture、merged-cover-header 和 CPython license hash bootstrap。四项均在 target parent `affc52a...` 复现。
+
+## Release Closure
+
+Pin closure 已完成：engine packaging/revision changes 已提交并推送个人 origin；OpenSpace pin 已更新并在新 venv 以非 editable Git 安装重现。PEP 610 direct URL、loaded module、runtime revision 与 dependency pin 一致。
+
+Eligible for Production Rollout = true；本轮不自动执行 rollout。
