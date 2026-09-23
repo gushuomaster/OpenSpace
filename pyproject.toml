@@ -30,7 +30,7 @@ dependencies = [
     "aiohttp>=3.10.0",
     "requests>=2.32.0",
     "websockets>=13.0",
-    "skill-engineering @ git+https://github.com/gushuomaster/skill-engineering.git@4dc41c722633e46a0a7503edb74ce316f751d9ab",
+    "skill-engineering @ git+https://github.com/gushuomaster/skill-engineering.git@0c83c8e87356191a0ef36c5c0f5a3f262eebbe3c",
 ]
 
 [project.optional-dependencies]
