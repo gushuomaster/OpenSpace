@@ -114,7 +114,14 @@ from openspace.entrypoints.mcp.response import (
 )
 from openspace.runtime import ExecutionRequest
 
-from mcp.server.fastmcp import FastMCP
+try:
+    from mcp.server.mcpserver import MCPServer as FastMCP
+
+    _MCP_SERVER_V2 = True
+except ImportError:
+    from mcp.server.fastmcp import FastMCP
+
+    _MCP_SERVER_V2 = False
 
 _fastmcp_kwargs: dict = {}
 try:
@@ -2807,19 +2814,29 @@ def run_mcp_server() -> None:
         port = _parse_port_from_env(_default_port_for_transport(transport))
 
     if transport == "sse":
-        mcp.settings.host = args.host
-        mcp.settings.port = port
         logger.info("Starting OpenSpace MCP server with SSE transport on port %s", port)
-        mcp.run(transport="sse")
+        if _MCP_SERVER_V2:
+            mcp.run(transport="sse", host=args.host, port=port)
+        else:
+            mcp.settings.host = args.host
+            mcp.settings.port = port
+            mcp.run(transport="sse")
     elif transport == "streamable-http":
-        mcp.settings.host = args.host
-        mcp.settings.port = port
         logger.info(
             "Starting OpenSpace MCP server with streamable HTTP transport on %s:%s",
             args.host,
             port,
         )
-        mcp.run(transport="streamable-http")
+        if _MCP_SERVER_V2:
+            mcp.run(
+                transport="streamable-http",
+                host=args.host,
+                port=port,
+            )
+        else:
+            mcp.settings.host = args.host
+            mcp.settings.port = port
+            mcp.run(transport="streamable-http")
     else:
         logger.info("Starting OpenSpace MCP server with stdio transport")
         mcp.run(transport="stdio")
