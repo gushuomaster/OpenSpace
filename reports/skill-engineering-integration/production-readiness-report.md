@@ -16,12 +16,12 @@ Production Rollout evidence collected
 NOT_READY for PRODUCTION_READY
 ```
 
-原因不是已验证的 Governance 合约失效，而是生产运行证据仍缺少真实持续 workload、独立 rollback 演练和真实 Provider timeout 分布。
+原因不是已验证的 Governance 合约失效；独立 rollback 已通过，但真实持续 workload、off 全链路和真实 Provider reliability/timeout 分布仍不足，shared EvidenceStore 也尚未与真实 Provider workload 对齐。
 
 ## Immutable Revisions
 
 ```text
-OpenSpace=d99034791ea5b7c2ee2c661735e18ee39c3b961d
+OpenSpace rollout baseline=90478ec39b52d4d478a341cc62eddfec07119e99
 skill-engineering=0c83c8e87356191a0ef36c5c0f5a3f262eebbe3c
 engine_version=1.0.3
 ```
@@ -55,7 +55,76 @@ Stage 1 为 `PASS_WITH_WARNINGS`，因为真实长期 workload 样本还不足�
 shadow
 ```
 
-理由：shadow 已具备可观测性和 fail-closed 语义，但真实 Provider 稳定性、持续 workload p95/p99、Evidence retention 和 rollback 尚未完成生产级验证。
+理由：shadow 已具备可观测性和 fail-closed 语义；rollback compatibility 已通过，但真实 Provider 稳定性、持续 workload p95/p99 和与真实 workload 对齐的 Evidence retention 尚未完成生产级验证。
+
+## Operational Closure
+
+### O1 — Off Full Lifecycle
+
+`off` 模式的 adapter 级检查仍满足 invocation=0、provider invocation=0、persistence=0；但本轮尚未在真实 OpenSpace entrypoint 中完整跑通 Create、Modify、Fix、Apply（以及独立 Evolution）全链路。因此 `O1=BLOCKED`，不能把局部 off 证据升级为 full lifecycle PASS。
+
+### O2 — Sustained Real Provider Workload
+
+本轮执行了 3 个真实 bundled Provider runs，目标为 OpenSpace `remember` Skill（2 files，3469 bytes）：
+
+```text
+runs=3
+completed=2
+semantic PASS=2
+Provider ERROR=1
+Provider UNAVAILABLE=1
+timeout=0
+completion rate=66.7%
+error rate=33.3%
+orphan process delta=0
+```
+
+Provider duration preliminary distribution：
+
+```text
+p50=88.581426s
+p95=128.550179s
+max=128.550179s
+```
+
+其中两次成功耗时约 `48.613s`、`76.028s`，一次 `UNAVAILABLE` 耗时约 `128.550s`。这已经暴露出生产可靠性风险，但样本不足 20、未覆盖 medium/large/invalid/multi-file workload，因此 `O2=BLOCKED`，`POC-03=PARTIAL`、`POC-04=BLOCKED`。
+
+### O3 — Independent Rollback-to-Pinned-Release
+
+在独立 worktree 中执行：
+
+```text
+current release: 90478ec
+rollback target: d990347
+skill-engineering: 0c83c8e87356191a0ef36c5c0f5a3f262eebbe3c
+```
+
+rollback 后保留原 EvidenceStore，不清库、不重建历史状态，并验证：
+
+- historical GovernanceResult 可读；
+- Dashboard 查询返回 `200`；
+- MCP `inspect_skill_governance` 返回同一 historical governance id；
+- 新 valid case 为 `PASS` + authorized；
+- 新 invalid case 为 `BLOCKED` + unauthorized；
+- source integrity 为 `PASS`。
+
+因此 `O3=PASS`，证据为 `D:/project/operational-rollback/verify.json`。
+
+### O4 — Shared EvidenceStore Long-Term Growth
+
+同一个 `EvidenceStore` 连续执行 24 次 Governance run：
+
+```text
+initial records=0
+final records=24
+initial size=4096 bytes
+final size=4096 bytes
+average growth/run=0 bytes (SQLite page allocation remained stable)
+early/middle/latest readable=true
+query p50=0.011672s
+```
+
+没有清空数据库或删除旧记录，也没有发现重复 GovernanceResult。由于该 24-run workload 是 synthetic Governance evaluation 而不是 O2 的真实 Provider workload，`O4=PARTIAL`，不能单独关闭长期生产存储 blocker。
 
 ## Reliability and Quality
 
@@ -85,7 +154,7 @@ shadow
 | shadow | 0.008164 | 0.010507 | 0.010805 | synthetic contract evaluation + persistence |
 | enforced | 0.002813 | 0.005985 | 0.006256 | synthetic contract evaluation + persistence |
 
-这些数字不代表真实 Provider 端到端延迟；此前真实大型 Provider 约 `142s` 的结果仍是生产性能分析必须纳入的样本。由于真实持续 workload 分布尚未完成，`performance_profile_complete=BLOCKED`。
+受控 Governance 数字不代表真实 Provider 端到端延迟；本轮真实 Provider 3-run preliminary 分布已单独记录，但此前真实大型 Provider 约 `142s` 的结果仍需和 medium/large workload 一起纳入正式分布。由于真实持续 workload 分布尚未完成，`performance_profile_complete=BLOCKED`。
 
 ## Concurrency and Idempotency
 
@@ -102,7 +171,7 @@ shadow
 
 已覆盖：CAS、replay protection、crash recovery、Job Object cleanup、MCP/Dashboard/Evidence 一致性。
 
-未覆盖：从当前 pin 回滚到上一发布 pin、读取旧 Evidence、验证 Candidate/治理历史在 rollback 后继续可读的独立演练。该缺口是 `PR-015` production blocker。
+独立 rollback drill 已完成：从 `90478ec` 回到隔离 worktree `d990347`，历史 Evidence/Governance、Dashboard、MCP 和新 valid/invalid case 均通过。剩余风险是 O1/O2/O4，而不是 rollback compatibility。
 
 ## Regression
 
@@ -121,9 +190,10 @@ Known baseline 仍为 OpenSpace Windows `/etc/...` path mapping；本轮未修�
 
 ## Production Blockers
 
-1. `PR-014`：真实 Provider + 多类型 Skill 的持续 workload 和稳定 latency/error 分布尚未完成。
-2. `PR-015`：独立 rollback-to-pinned-release 演练尚未完成。
-3. `PR-001/006/008/012`：off 全链路、enforced invalid full Evolution、真实 timeout 和共享 EvidenceStore growth 仍只有受控或局部证据。
+1. `O1/POC-01`：真实 OpenSpace entrypoint 的 off Create/Modify/Fix/Apply 全链路尚未完成。
+2. `O2/POC-02/POC-04`：真实 Provider 只有 3 runs，出现 1 次 `UNAVAILABLE`，尚未完成 20-run、多规模、invalid/multi-file workload。
+3. `POC-03`：真实 Provider latency 只有 preliminary p50/p95/max，不能代表稳定生产分布。
+4. `O4/POC-07`：shared store 24-run 仍是 synthetic Governance workload，尚未与真实 Provider workload 对齐。
 
 因此当前最终结论为：
 

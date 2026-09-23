@@ -2,11 +2,14 @@
 
 ## 验证基线
 
-- OpenSpace integration revision：`d99034791ea5b7c2ee2c661735e18ee39c3b961d`
+- OpenSpace rollout baseline：`90478ec39b52d4d478a341cc62eddfec07119e99`
 - skill-engineering pin：`0c83c8e87356191a0ef36c5c0f5a3f262eebbe3c`
 - Runtime engine revision：`0c83c8e87356191a0ef36c5c0f5a3f262eebbe3c`
 - 受控 rollout artifact：`D:/project/production-rollout-live-3/production-rollout-results.json`
 - 真实 crash/restart artifact：`D:/project/production-rollout-b2/b2-live-results.json`
+- rollback seed/verify：`D:/project/operational-rollback/seed.json`, `verify.json`
+- shared EvidenceStore artifact：`D:/project/operational-shared-evidence/shared-growth.json`
+- real Provider sample artifacts：`D:/project/provider-workload-small.json`, `small-3.json`
 
 ## Matrix
 
@@ -26,7 +29,20 @@
 | PR-012 | Evidence growth | bounded/understood | 10 次受控运行 DB=4096 bytes；未覆盖共享生产 DB 长期增长、压缩和 retention | rollout harness | PARTIAL |
 | PR-013 | process cleanup | no orphan | engine Windows Job Object regression 2 passed；B2 OpenSpace cleanup complete | `test_host_provider_execution.py`; B2 logs | PASS |
 | PR-014 | sustained workload | stable | 仅完成 20 次受控 Governance 调用；真实 Provider/多 Skill 长时间 workload 未完成 | rollout performance artifact | BLOCKED |
-| PR-015 | rollback | reproducible | 已验证 crash recovery/backup safety，但未完成独立 rollback-to-pinned-release 演练 | B2 recovery artifact；无独立 rollback artifact | BLOCKED |
+| PR-015 | rollback | reproducible | 独立 rollback-to-pinned-release 已完成；历史 Evidence/Governance、Dashboard、MCP 和新 valid/invalid case 均通过 | `operational-rollback/verify.json` | PASS |
+
+## Production Operational Closure
+
+| ID | 场景 | Expected | Actual | Evidence | Status |
+|---|---|---|---|---|---|
+| POC-01 | off full lifecycle | Create/Modify/Fix/Apply 正常且 invocation=0 | 真实完整 entrypoint workload 尚未完成；仅有 off adapter 级证据 | `production-rollout-live-3` | BLOCKED |
+| POC-02 | sustained real Provider workload | bounded continuous workload | 3 个真实 Provider runs；2 completed、1 `UNAVAILABLE`；未达到要求的 20-run 多规模 workload | provider workload artifacts | BLOCKED |
+| POC-03 | Provider latency distribution | p50/p95/max measured | 3-run preliminary：p50 `88.581s`、p95 `128.550s`、max `128.550s`；样本不足 | provider workload artifacts | PARTIAL |
+| POC-04 | Provider reliability | completion/error/timeout understood | completion `2/3=66.7%`；error `1/3=33.3%`；unavailable `1/3`；orphan delta `0` | provider workload artifacts | BLOCKED |
+| POC-05 | isolated rollback drill | known-good pin + restart + state preserved | `90478ec → d990347` isolated worktree；历史 Evidence、Dashboard、MCP、valid/invalid 新请求均通过 | `operational-rollback/verify.json` | PASS |
+| POC-06 | rollback evidence compatibility | old Evidence/Governance readable | historical governance id 可由 rollback runtime、Dashboard、MCP 读取；revision=`0c83c8e...` | `operational-rollback/verify.json` | PASS |
+| POC-07 | shared EvidenceStore longevity | shared store growth measurable | 单一 DB 连续 24 runs，24 records，4096 bytes；首/中/末记录可读；当前 workload 为 synthetic Governance | `operational-shared-evidence/shared-growth.json` | PARTIAL |
+| POC-08 | Evidence query integrity | early/middle/latest readable, no severe degradation | 三个抽样点可读，query p50 `0.011672s`，无语义损坏 | `operational-shared-evidence/shared-growth.json` | PASS_WITH_WARNINGS |
 
 ## Gate Status
 
@@ -46,5 +62,7 @@
 - `evidence_growth_review`：PARTIAL
 - `rollback`：BLOCKED
 - `new_regression_failures`：PASS（仅既有 baseline）
+
+Operational closure：`O1=BLOCKED`、`O2=BLOCKED`、`O3=PASS`、`O4=PARTIAL`。
 
 结论：Production Readiness Gate 未满足，当前不能声明 `PRODUCTION_READY`。
