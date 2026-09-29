@@ -37,6 +37,11 @@ tests/grounding/core/*
 !tests/grounding/core/permissions/
 tests/grounding/core/permissions/*
 !tests/grounding/core/permissions/test_loader_runtime_modes.py
+!tests/grounding/backends/
+tests/grounding/backends/*
+!tests/grounding/backends/mcp/
+tests/grounding/backends/mcp/*
+!tests/grounding/backends/mcp/test_mcp_sdk_compatibility.py
 !tests/runtime/
 tests/runtime/*
 !tests/runtime/test_headless_permission_context.py
