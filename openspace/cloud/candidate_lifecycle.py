@@ -1,0 +1,409 @@
+"""Durable records for the two-stage Cloud Skill candidate lifecycle."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import shutil
+import uuid
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
+from enum import StrEnum
+from pathlib import Path
+from typing import Any, Iterable, Mapping
+
+from engine.inventory import digest_tree
+
+
+_SCHEMA_VERSION = "1.0"
+
+
+class CandidateIntegrityError(ValueError):
+    """Raised when persisted Candidate identity no longer matches its bytes."""
+
+
+class CandidateStatus(StrEnum):
+    QUARANTINED = "QUARANTINED"
+    GOVERNANCE_PENDING = "GOVERNANCE_PENDING"
+    GOVERNANCE_PASSED = "GOVERNANCE_PASSED"
+    GOVERNANCE_BLOCKED = "GOVERNANCE_BLOCKED"
+    GOVERNANCE_INCOMPLETE = "GOVERNANCE_INCOMPLETE"
+    GOVERNANCE_ERROR = "GOVERNANCE_ERROR"
+    INTEGRITY_MISMATCH = "INTEGRITY_MISMATCH"
+    INSTALLING = "INSTALLING"
+    INSTALLED = "INSTALLED"
+    INSTALL_FAILED = "INSTALL_FAILED"
+
+
+class SourceIntegrityStatus(StrEnum):
+    PROVEN = "PROVEN"
+    UNPROVEN = "UNPROVEN"
+    MISMATCH = "MISMATCH"
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateManifest:
+    schema_version: str
+    candidate_id: str
+    cloud_skill_id: str
+    source_bundle_sha256: str
+    source_manifest_hash: str | None
+    source_integrity_status: SourceIntegrityStatus
+    candidate_digest: str
+    local_content_hash: str
+    final_skill_id: str
+    final_directory_name: str
+    intended_install_parent: str
+    local_category: str
+    local_category_path: str
+    package_id: str | None
+    package_path: str | None
+    package_snapshot_version: str | None
+    acquired_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateState:
+    schema_version: str
+    status: CandidateStatus
+    updated_at: str
+    error_code: str | None = None
+    error_message: str | None = None
+    installed_path: str | None = None
+    receipt_digest: str | None = None
+    installed_digest: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateGovernanceBinding:
+    schema_version: str
+    candidate_id: str
+    candidate_manifest_digest: str
+    canonical_payload_path: str
+    candidate_digest: str
+    inspection_id: str
+    validation_id: str
+    managed_completion_receipt_digest: str
+    bound_at: str
+
+
+_ALLOWED_TRANSITIONS: Mapping[CandidateStatus, frozenset[CandidateStatus]] = {
+    CandidateStatus.QUARANTINED: frozenset(
+        {
+            CandidateStatus.GOVERNANCE_PENDING,
+            CandidateStatus.GOVERNANCE_BLOCKED,
+            CandidateStatus.GOVERNANCE_INCOMPLETE,
+            CandidateStatus.GOVERNANCE_ERROR,
+            CandidateStatus.INTEGRITY_MISMATCH,
+        }
+    ),
+    CandidateStatus.GOVERNANCE_PENDING: frozenset(
+        {
+            CandidateStatus.GOVERNANCE_PASSED,
+            CandidateStatus.GOVERNANCE_BLOCKED,
+            CandidateStatus.GOVERNANCE_INCOMPLETE,
+            CandidateStatus.GOVERNANCE_ERROR,
+            CandidateStatus.INTEGRITY_MISMATCH,
+        }
+    ),
+    CandidateStatus.GOVERNANCE_PASSED: frozenset(
+        {CandidateStatus.INSTALLING, CandidateStatus.INTEGRITY_MISMATCH}
+    ),
+    CandidateStatus.INSTALLING: frozenset(
+        {
+            CandidateStatus.INSTALLED,
+            CandidateStatus.INSTALL_FAILED,
+            CandidateStatus.INTEGRITY_MISMATCH,
+        }
+    ),
+}
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _canonical_value(value: Any) -> Any:
+    if isinstance(value, StrEnum):
+        return value.value
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, Mapping):
+        return {str(key): _canonical_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_canonical_value(item) for item in value]
+    return value
+
+
+def canonical_json_digest(value: Any) -> str:
+    if hasattr(value, "__dataclass_fields__"):
+        value = asdict(value)
+    encoded = json.dumps(
+        _canonical_value(value),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def candidate_identity(
+    *,
+    cloud_skill_id: str,
+    source_bundle_sha256: str,
+    source_manifest_hash: str | None,
+    source_integrity_status: SourceIntegrityStatus,
+    candidate_digest: str,
+    final_skill_id: str,
+    final_directory_name: str,
+    intended_install_parent: str,
+    local_category_path: str,
+) -> str:
+    parent = os.path.normcase(str(Path(intended_install_parent).expanduser().resolve()))
+    digest = canonical_json_digest(
+        {
+            "schema_version": _SCHEMA_VERSION,
+            "cloud_skill_id": str(cloud_skill_id),
+            "source_bundle_sha256": str(source_bundle_sha256),
+            "source_manifest_hash": source_manifest_hash,
+            "source_integrity_status": source_integrity_status,
+            "candidate_digest": str(candidate_digest),
+            "final_skill_id": str(final_skill_id),
+            "final_directory_name": str(final_directory_name),
+            "intended_install_parent": parent,
+            "local_category_path": str(local_category_path),
+        }
+    )
+    return f"candidate_{digest}"
+
+
+def _manifest_to_data(manifest: CandidateManifest) -> dict[str, Any]:
+    data = asdict(manifest)
+    data["source_integrity_status"] = manifest.source_integrity_status.value
+    return data
+
+
+def _state_to_data(state: CandidateState) -> dict[str, Any]:
+    data = asdict(state)
+    data["status"] = state.status.value
+    return data
+
+
+def _atomic_write_json(path: Path, payload: Mapping[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    temporary.write_text(
+        json.dumps(dict(payload), ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    os.replace(temporary, path)
+
+
+class CandidateRepository:
+    """Own Candidate files outside every formal Skill root."""
+
+    def __init__(self, state_root: str | Path) -> None:
+        self.state_root = Path(state_root).expanduser().resolve()
+        self.quarantine_root = self.state_root / "quarantine"
+
+    def candidate_dir(self, candidate_id: str) -> Path:
+        if not candidate_id.startswith("candidate_") or any(
+            separator in candidate_id for separator in ("/", "\\")
+        ):
+            raise ValueError("invalid candidate_id")
+        return self.quarantine_root / candidate_id
+
+    def payload_path(self, manifest: CandidateManifest) -> Path:
+        return self.candidate_dir(manifest.candidate_id) / "payload" / manifest.final_directory_name
+
+    def manifest_path(self, candidate_id: str) -> Path:
+        return self.candidate_dir(candidate_id) / "candidate-manifest.json"
+
+    def state_path(self, candidate_id: str) -> Path:
+        return self.candidate_dir(candidate_id) / "state.json"
+
+    def governance_binding_path(self, candidate_id: str) -> Path:
+        return self.candidate_dir(candidate_id) / "governance" / "candidate-binding.json"
+
+    def quarantine(
+        self,
+        prepared_skill: str | Path,
+        *,
+        cloud_skill_id: str,
+        source_bundle_sha256: str,
+        source_manifest_hash: str | None,
+        source_integrity_status: SourceIntegrityStatus,
+        local_content_hash: str,
+        final_skill_id: str,
+        intended_install_parent: str | Path,
+        local_category: str,
+        local_category_path: str,
+        package_id: str | None,
+        package_path: str | None,
+        package_snapshot_version: str | None,
+        acquired_at: str,
+    ) -> CandidateManifest:
+        source = Path(prepared_skill).expanduser().resolve(strict=True)
+        if not source.is_dir() or not (source / "SKILL.md").is_file():
+            raise ValueError("prepared Candidate must be a Skill directory")
+        candidate_digest = digest_tree(source)
+        install_parent = Path(intended_install_parent).expanduser().resolve()
+        candidate_id = candidate_identity(
+            cloud_skill_id=cloud_skill_id,
+            source_bundle_sha256=source_bundle_sha256,
+            source_manifest_hash=source_manifest_hash,
+            source_integrity_status=source_integrity_status,
+            candidate_digest=candidate_digest,
+            final_skill_id=final_skill_id,
+            final_directory_name=source.name,
+            intended_install_parent=str(install_parent),
+            local_category_path=local_category_path,
+        )
+        manifest = CandidateManifest(
+            _SCHEMA_VERSION,
+            candidate_id,
+            cloud_skill_id,
+            source_bundle_sha256,
+            source_manifest_hash,
+            source_integrity_status,
+            candidate_digest,
+            local_content_hash,
+            final_skill_id,
+            source.name,
+            str(install_parent),
+            local_category,
+            local_category_path,
+            package_id,
+            package_path,
+            package_snapshot_version,
+            acquired_at,
+        )
+        destination = self.candidate_dir(candidate_id)
+        if destination.exists():
+            existing = self.load_manifest(candidate_id)
+            current_digest = digest_tree(self.payload_path(existing))
+            if current_digest != existing.candidate_digest:
+                raise CandidateIntegrityError("persisted Candidate payload digest changed")
+            if existing.candidate_digest != candidate_digest:
+                raise CandidateIntegrityError("Candidate payload digest does not match acquisition")
+            if candidate_identity(
+                cloud_skill_id=existing.cloud_skill_id,
+                source_bundle_sha256=existing.source_bundle_sha256,
+                source_manifest_hash=existing.source_manifest_hash,
+                source_integrity_status=existing.source_integrity_status,
+                candidate_digest=existing.candidate_digest,
+                final_skill_id=existing.final_skill_id,
+                final_directory_name=existing.final_directory_name,
+                intended_install_parent=existing.intended_install_parent,
+                local_category_path=existing.local_category_path,
+            ) != candidate_id:
+                raise CandidateIntegrityError("persisted Candidate identity changed")
+            return existing
+
+        self.quarantine_root.mkdir(parents=True, exist_ok=True)
+        acquiring = self.quarantine_root / f".acquiring-{uuid.uuid4().hex}"
+        payload = acquiring / "payload" / source.name
+        try:
+            payload.parent.mkdir(parents=True)
+            shutil.copytree(source, payload)
+            _atomic_write_json(acquiring / "candidate-manifest.json", _manifest_to_data(manifest))
+            _atomic_write_json(
+                acquiring / "state.json",
+                _state_to_data(
+                    CandidateState(_SCHEMA_VERSION, CandidateStatus.QUARANTINED, acquired_at)
+                ),
+            )
+            os.replace(acquiring, destination)
+        except Exception:
+            shutil.rmtree(acquiring, ignore_errors=True)
+            raise
+        return manifest
+
+    def load_manifest(self, candidate_id: str) -> CandidateManifest:
+        payload = json.loads(self.manifest_path(candidate_id).read_text(encoding="utf-8"))
+        return CandidateManifest(
+            schema_version=str(payload["schema_version"]),
+            candidate_id=str(payload["candidate_id"]),
+            cloud_skill_id=str(payload["cloud_skill_id"]),
+            source_bundle_sha256=str(payload["source_bundle_sha256"]),
+            source_manifest_hash=payload.get("source_manifest_hash"),
+            source_integrity_status=SourceIntegrityStatus(payload["source_integrity_status"]),
+            candidate_digest=str(payload["candidate_digest"]),
+            local_content_hash=str(payload["local_content_hash"]),
+            final_skill_id=str(payload["final_skill_id"]),
+            final_directory_name=str(payload["final_directory_name"]),
+            intended_install_parent=str(payload["intended_install_parent"]),
+            local_category=str(payload["local_category"]),
+            local_category_path=str(payload["local_category_path"]),
+            package_id=payload.get("package_id"),
+            package_path=payload.get("package_path"),
+            package_snapshot_version=payload.get("package_snapshot_version"),
+            acquired_at=str(payload["acquired_at"]),
+        )
+
+    def manifest_digest(self, candidate_id: str) -> str:
+        return canonical_json_digest(self.load_manifest(candidate_id))
+
+    def load_state(self, candidate_id: str) -> CandidateState:
+        payload = json.loads(self.state_path(candidate_id).read_text(encoding="utf-8"))
+        return CandidateState(
+            schema_version=str(payload["schema_version"]),
+            status=CandidateStatus(payload["status"]),
+            updated_at=str(payload["updated_at"]),
+            error_code=payload.get("error_code"),
+            error_message=payload.get("error_message"),
+            installed_path=payload.get("installed_path"),
+            receipt_digest=payload.get("receipt_digest"),
+            installed_digest=payload.get("installed_digest"),
+        )
+
+    def transition(
+        self,
+        candidate_id: str,
+        *,
+        expected: Iterable[CandidateStatus],
+        next_status: CandidateStatus,
+        error_code: str | None = None,
+        error_message: str | None = None,
+        installed_path: str | None = None,
+        receipt_digest: str | None = None,
+        installed_digest: str | None = None,
+        updated_at: str | None = None,
+    ) -> CandidateState:
+        current = self.load_state(candidate_id)
+        expected_set = frozenset(expected)
+        if current.status not in expected_set:
+            expected_text = ", ".join(sorted(item.value for item in expected_set))
+            raise ValueError(
+                f"Candidate state is {current.status.value}; expected {expected_text}"
+            )
+        if next_status not in _ALLOWED_TRANSITIONS.get(current.status, frozenset()):
+            raise ValueError(
+                f"invalid Candidate transition: {current.status.value} -> {next_status.value}"
+            )
+        state = CandidateState(
+            _SCHEMA_VERSION,
+            next_status,
+            updated_at or _utc_now(),
+            error_code,
+            error_message,
+            installed_path,
+            receipt_digest,
+            installed_digest,
+        )
+        _atomic_write_json(self.state_path(candidate_id), _state_to_data(state))
+        return state
+
+
+__all__ = [
+    "CandidateGovernanceBinding",
+    "CandidateIntegrityError",
+    "CandidateManifest",
+    "CandidateRepository",
+    "CandidateState",
+    "CandidateStatus",
+    "SourceIntegrityStatus",
+    "candidate_identity",
+    "canonical_json_digest",
+]
