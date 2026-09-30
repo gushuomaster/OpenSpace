@@ -125,6 +125,7 @@ openspace = [
 testpaths = ["tests"]
 markers = [
     "playwright: requires the Playwright Python package and a launchable Chromium browser; must fail instead of skipping when configured as a CI gate",
+    "terminal_bench: requires Harbor and Terminal-Bench in an isolated optional benchmark environment",
 ]
 norecursedirs = [
     ".git",
