@@ -92,6 +92,7 @@ _ALLOWED_TRANSITIONS: Mapping[CandidateStatus, frozenset[CandidateStatus]] = {
     CandidateStatus.QUARANTINED: frozenset(
         {
             CandidateStatus.GOVERNANCE_PENDING,
+            CandidateStatus.GOVERNANCE_PASSED,
             CandidateStatus.GOVERNANCE_BLOCKED,
             CandidateStatus.GOVERNANCE_INCOMPLETE,
             CandidateStatus.GOVERNANCE_ERROR,
@@ -188,6 +189,10 @@ def _state_to_data(state: CandidateState) -> dict[str, Any]:
     data = asdict(state)
     data["status"] = state.status.value
     return data
+
+
+def _binding_to_data(binding: CandidateGovernanceBinding) -> dict[str, Any]:
+    return asdict(binding)
 
 
 def _atomic_write_json(path: Path, payload: Mapping[str, Any]) -> None:
@@ -357,6 +362,110 @@ class CandidateRepository:
             receipt_digest=payload.get("receipt_digest"),
             installed_digest=payload.get("installed_digest"),
         )
+
+    def load_governance_binding(
+        self,
+        candidate_id: str,
+    ) -> CandidateGovernanceBinding:
+        payload = json.loads(
+            self.governance_binding_path(candidate_id).read_text(encoding="utf-8")
+        )
+        return CandidateGovernanceBinding(
+            schema_version=str(payload["schema_version"]),
+            candidate_id=str(payload["candidate_id"]),
+            candidate_manifest_digest=str(payload["candidate_manifest_digest"]),
+            canonical_payload_path=str(payload["canonical_payload_path"]),
+            candidate_digest=str(payload["candidate_digest"]),
+            inspection_id=str(payload["inspection_id"]),
+            validation_id=str(payload["validation_id"]),
+            managed_completion_receipt_digest=str(
+                payload["managed_completion_receipt_digest"]
+            ),
+            bound_at=str(payload["bound_at"]),
+        )
+
+    def bind_governance(
+        self,
+        candidate_id: str,
+        result: Any,
+        *,
+        bound_at: str | None = None,
+    ) -> CandidateGovernanceBinding:
+        if (
+            getattr(result, "status", None) is not CandidateStatus.GOVERNANCE_PASSED
+            or not getattr(result, "install_authorized", False)
+            or getattr(result, "receipt", None) is None
+            or not getattr(result, "receipt_digest", None)
+        ):
+            raise ValueError("only verified formal Governance PASS can be bound")
+
+        manifest = self.load_manifest(candidate_id)
+        if manifest.candidate_id != candidate_id:
+            raise CandidateIntegrityError("Candidate manifest identity changed")
+        recomputed_id = candidate_identity(
+            cloud_skill_id=manifest.cloud_skill_id,
+            source_bundle_sha256=manifest.source_bundle_sha256,
+            source_manifest_hash=manifest.source_manifest_hash,
+            source_integrity_status=manifest.source_integrity_status,
+            candidate_digest=manifest.candidate_digest,
+            final_skill_id=manifest.final_skill_id,
+            final_directory_name=manifest.final_directory_name,
+            intended_install_parent=manifest.intended_install_parent,
+            local_category_path=manifest.local_category_path,
+        )
+        if recomputed_id != candidate_id:
+            raise CandidateIntegrityError("Candidate manifest identity changed")
+        if manifest.source_integrity_status is not SourceIntegrityStatus.PROVEN:
+            raise ValueError("Candidate source integrity is not PROVEN")
+
+        payload = self.payload_path(manifest).resolve(strict=True)
+        current_digest = digest_tree(payload)
+        if current_digest != manifest.candidate_digest:
+            raise CandidateIntegrityError("Candidate payload digest changed")
+        if str(payload) != str(getattr(result, "canonical_candidate_path", "")):
+            raise CandidateIntegrityError("Governance result targets another Candidate path")
+        if current_digest != getattr(result, "candidate_digest", None):
+            raise CandidateIntegrityError("Governance result targets another Candidate digest")
+        receipt = result.receipt
+        if receipt.candidate_digest != current_digest:
+            raise CandidateIntegrityError("Governance receipt targets another Candidate digest")
+        if receipt.inspection_id != getattr(result, "inspection_id", None):
+            raise CandidateIntegrityError("Governance inspection identity changed")
+
+        state = self.load_state(candidate_id)
+        bindable_states = {
+            CandidateStatus.QUARANTINED,
+            CandidateStatus.GOVERNANCE_PENDING,
+        }
+        if state.status not in bindable_states:
+            raise ValueError(f"Candidate state is not bindable: {state.status.value}")
+        path = self.governance_binding_path(candidate_id)
+        if path.exists():
+            raise CandidateIntegrityError("Candidate already has a Governance binding")
+
+        binding = CandidateGovernanceBinding(
+            schema_version=_SCHEMA_VERSION,
+            candidate_id=candidate_id,
+            candidate_manifest_digest=self.manifest_digest(candidate_id),
+            canonical_payload_path=str(payload),
+            candidate_digest=current_digest,
+            inspection_id=result.inspection_id,
+            validation_id=result.validation_id,
+            managed_completion_receipt_digest=result.receipt_digest,
+            bound_at=bound_at or _utc_now(),
+        )
+        _atomic_write_json(path, _binding_to_data(binding))
+        try:
+            self.transition(
+                candidate_id,
+                expected=bindable_states,
+                next_status=CandidateStatus.GOVERNANCE_PASSED,
+                receipt_digest=result.receipt_digest,
+            )
+        except Exception:
+            path.unlink(missing_ok=True)
+            raise
+        return binding
 
     def transition(
         self,
