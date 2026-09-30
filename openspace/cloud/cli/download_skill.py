@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Download a skill from the OpenSpace cloud platform.
+"""Acquire a Skill Candidate or package inspection artifacts from OpenSpace cloud.
 
 Usage:
     openspace-download-skill --skill-id "<cloud_skill_uuid>" --output-dir ./skills/
@@ -21,15 +21,26 @@ from openspace.cloud.config import load_cloud_config, normalize_cloud_base_url
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="openspace-download-skill",
-        description="Download a skill from OpenSpace's cloud community",
+        description="Acquire a quarantined Skill Candidate from OpenSpace cloud",
     )
     target = parser.add_mutually_exclusive_group(required=True)
     target.add_argument("--skill-id", help="Cloud skill ID. v2 UUIDs use /api/v2/skills/{id}/bundle.")
     target.add_argument("--package-id", help="v2 package UUID to download as a subtree bundle")
-    parser.add_argument("--output-dir", required=True, help="Target directory for extraction")
+    parser.add_argument(
+        "--output-dir",
+        required=True,
+        help="Intended formal placement root for a Skill Candidate",
+    )
     parser.add_argument("--cloud-base-url", default=None, help="Override OpenSpace cloud service root URL")
     parser.add_argument("--audience", default="requester_visible", choices=["requester_visible", "public"])
-    parser.add_argument("--force", action="store_true", help="Overwrite existing skill directory")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "Allow refresh of an equal-id quarantined Candidate only; never "
+            "overwrite a formally installed Skill"
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -53,22 +64,28 @@ def main() -> None:
         print(f"ERROR: {e}", file=sys.stderr)
         sys.exit(1)
 
-    if result.get("status") == "already_exists" and not args.force:
+    if result.get("status") == "already_exists":
         print(
-            f"ERROR: Skill directory already exists: {result.get('local_path')}\n"
-            f"  Use --force to overwrite.",
+            "ERROR: A formal Skill directory already exists and this command "
+            "will not overwrite it.",
             file=sys.stderr,
         )
         sys.exit(1)
 
     files = result.get("files", [])
-    local_path = result.get("local_path", "")
-    print(f"  Extracted {len(files)} file(s) to {local_path}", file=sys.stderr)
+    output_path = result.get("candidate_path") or result.get("artifact_path") or ""
+    print(f"  Extracted {len(files)} file(s) to {output_path}", file=sys.stderr)
     for f in files:
         print(f"    {f}", file=sys.stderr)
 
     print(json.dumps(result, indent=2, ensure_ascii=False))
-    print(f"\nSkill downloaded to: {local_path}", file=sys.stderr)
+    if result.get("status") == "governance_required":
+        print(
+            f"\nCandidate quarantined at {output_path}; Governance required",
+            file=sys.stderr,
+        )
+    elif result.get("inspection_only"):
+        print(f"\nPackage inspection artifacts: {output_path}", file=sys.stderr)
 
 
 if __name__ == "__main__":

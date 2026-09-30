@@ -485,56 +485,46 @@ async def _do_import_cloud_skill(
     local_category: str | None = None,
     local_category_path: str | None = None,
 ) -> Dict[str, Any]:
-    """Download a cloud skill and register it locally."""
-    client = _get_cloud_client()
+    """Acquire a cloud Skill Candidate without formal registration."""
+    mapping_store = await _get_cloud_mapping_store()
 
-    if target_dir:
-        base_dir = Path(target_dir)
-    else:
-        host_ws = (
-            os.environ.get("NANOBOT_WORKSPACE")
-            or os.environ.get("OPENCLAW_STATE_DIR")
-        )
-        if host_ws:
-            base_dir = Path(host_ws) / "skills"
-            base_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        client = _get_cloud_client(mapping_store=mapping_store)
+        if target_dir:
+            base_dir = Path(target_dir)
         else:
-            openspace = await _get_openspace()
-            grounding_config = openspace.get_grounding_config()
-            skill_cfg = grounding_config.skills if grounding_config else None
-            if skill_cfg and skill_cfg.skill_dirs:
-                base_dir = Path(skill_cfg.skill_dirs[0])
+            host_ws = (
+                os.environ.get("NANOBOT_WORKSPACE")
+                or os.environ.get("OPENCLAW_STATE_DIR")
+            )
+            if host_ws:
+                base_dir = Path(host_ws) / "skills"
+                base_dir.mkdir(parents=True, exist_ok=True)
             else:
-                base_dir = _PACKAGE_ROOT / "skills"
+                openspace = await _get_openspace()
+                grounding_config = openspace.get_grounding_config()
+                skill_cfg = grounding_config.skills if grounding_config else None
+                if skill_cfg and skill_cfg.skill_dirs:
+                    base_dir = Path(skill_cfg.skill_dirs[0])
+                else:
+                    base_dir = _PACKAGE_ROOT / "skills"
 
-    result = await asyncio.to_thread(
-        client.import_skill,
-        cloud_skill_id,
-        base_dir,
-        local_category=local_category,
-        local_category_path=local_category_path,
-    )
-
-    skill_dir = Path(result.get("local_path", ""))
-    if skill_dir.exists():
-        openspace = await _get_openspace()
-        _register_evidence_read_roots(openspace, skill_dir)
-        registry = openspace.get_skill_registry()
-        if registry:
-            meta = registry.register_skill_dir(skill_dir)
-            if meta:
-                store = await _get_runtime_store(required=False)
-                if store:
-                    await store.sync_from_registry([meta])
-                _register_evidence_read_roots(openspace, skill_dir)
-                result["registered"] = True
+        result = await asyncio.to_thread(
+            client.import_skill,
+            cloud_skill_id,
+            base_dir,
+            local_category=local_category,
+            local_category_path=local_category_path,
+        )
+    finally:
+        mapping_store.close()
 
     result.setdefault("registered", False)
     return result
 
 
 def _resolve_cloud_import_base_dir(target_dir: Optional[str] = None) -> Path:
-    """Resolve a writable local root for cloud package imports."""
+    """Resolve the accepted legacy target hint without making it a scan root."""
 
     if target_dir:
         base_dir = Path(target_dir)
@@ -545,7 +535,6 @@ def _resolve_cloud_import_base_dir(target_dir: Optional[str] = None) -> Path:
             or os.environ.get("OPENSPACE_WORKSPACE")
         )
         base_dir = Path(host_ws) / "skills" if host_ws else _PACKAGE_ROOT / "skills"
-    base_dir.mkdir(parents=True, exist_ok=True)
     return base_dir
 
 
@@ -782,7 +771,9 @@ async def execute_task(
                 "Cloud candidates were found but not imported automatically. "
                 "Use cloud_browse_skills(action='local_taxonomy') and then "
                 "cloud_browse_skills(action='import_skill', cloud_skill_id=..., "
-                "local_category_path=...) before expecting them in local retrieval."
+                "local_category_path=...) to acquire a quarantined Candidate. "
+                "It enters local retrieval only after external Governance and "
+                "cloud_browse_skills(action='install_candidate', ...)."
             )
         return _json_ok(formatted)
 
@@ -867,6 +858,8 @@ async def cloud_browse_skills(
     target_dir: str | None = None,
     local_category: str | None = None,
     local_category_path: str | None = None,
+    candidate_id: str | None = None,
+    governance_outcome: dict[str, Any] | None = None,
     limit: int = 8,
     audience: str = "requester_visible",
     artifact_filter: str = "downloadable_only",
@@ -886,7 +879,9 @@ async def cloud_browse_skills(
          needed before import.
       3. ``local_placement`` to choose or create a local package taxonomy path.
       4. ``import_skill`` with ``cloud_skill_id`` and ``local_category_path`` to
-         download/register the selected skill locally.
+         acquire the selected skill into Candidate quarantine.
+      5. After external Governance, ``install_candidate`` with ``candidate_id``
+         and the complete serialized Governance outcome.
 
     Optional package discovery actions:
       1. ``recall`` with ``query`` to get package candidates and ``search_id``.
@@ -901,7 +896,8 @@ async def cloud_browse_skills(
     Args:
         action: One of ``local_placement``, ``local_taxonomy``, ``recall``,
                 ``pull_projection``, ``search_skills``, ``fetch_skill_detail``,
-                ``import_skill``, or ``import_package_bundle``.
+                ``import_skill``, ``install_candidate``, or
+                ``import_package_bundle``.
         query: Query text for ``search_skills`` and ``recall``.
         search_id: ``search_id`` returned by ``recall``.
         package_ids: Selected package ids for ``pull_projection``.
@@ -912,6 +908,9 @@ async def cloud_browse_skills(
         local_category_path: Optional local package taxonomy path for
                              ``import_skill``. This is independent from cloud
                              package_path.
+        candidate_id: Candidate returned by ``import_skill`` for installation.
+        governance_outcome: Complete serialized validation, Codex semantic
+                            confirmation, and completion receipt.
         limit: Max package or skill candidates, depending on action.
     """
     normalized_action = str(action or "").strip().lower().replace("-", "_")
@@ -932,6 +931,7 @@ async def cloud_browse_skills(
         "fetch": "fetch_skill_detail",
         "detail": "fetch_skill_detail",
         "import": "import_skill",
+        "install": "install_candidate",
         "bundle": "import_package_bundle",
     }
     normalized_action = aliases.get(normalized_action, normalized_action)
@@ -981,6 +981,11 @@ async def cloud_browse_skills(
             local_category=local_category,
             local_category_path=local_category_path,
         )
+    if normalized_action == "install_candidate":
+        return await cloud_install_candidate(
+            candidate_id=candidate_id or "",
+            governance_outcome=governance_outcome,
+        )
     if normalized_action == "import_package_bundle":
         return await cloud_import_package_bundle(
             package_id=package_id or "",
@@ -1001,6 +1006,7 @@ async def cloud_browse_skills(
             "search_skills",
             "fetch_skill_detail",
             "import_skill",
+            "install_candidate",
             "import_package_bundle",
         ],
         "recommended_sequence": [
@@ -1010,6 +1016,7 @@ async def cloud_browse_skills(
             "fetch_skill_detail",
             "local_placement",
             "import_skill",
+            "install_candidate",
         ],
     })
 
@@ -1098,7 +1105,7 @@ async def _local_placement_payload(
         {
             "tool": "cloud_browse_skills",
             "action": "import_skill",
-            "reason": "For cloud imports, pass the selected or newly composed local_category_path.",
+            "reason": "Acquire a quarantined Candidate using the selected or newly composed local_category_path.",
             "required_fields": ["cloud_skill_id", "local_category_path"],
             "optional_fields": ["local_category"],
         },
@@ -1158,7 +1165,7 @@ async def _local_taxonomy_payload(
         {
             "tool": "cloud_browse_skills",
             "action": "import_skill",
-            "reason": "After selecting a local package taxonomy path, import the selected cloud skill.",
+            "reason": "After selecting a local package taxonomy path, acquire the selected cloud Skill Candidate.",
             "required_fields": ["cloud_skill_id", "local_category_path"],
         }
     ]
@@ -1397,7 +1404,7 @@ async def cloud_pull_package_projection(
                 {
                     "tool": "cloud_browse_skills",
                     "action": "import_skill",
-                    "reason": "Download/register an exact selected cloud skill after choosing a local package taxonomy path.",
+                    "reason": "Acquire an exact selected cloud Skill Candidate after choosing a local package taxonomy path.",
                     "required_fields": ["cloud_skill_id", "local_category_path"],
                     "optional_fields": ["local_category"],
                 },
@@ -1474,7 +1481,7 @@ async def cloud_search_skills(
                 {
                     "tool": "cloud_browse_skills",
                     "action": "import_skill",
-                    "reason": "Download/register a selected cloud skill after choosing a local package taxonomy path.",
+                    "reason": "Acquire a selected cloud Skill Candidate after choosing a local package taxonomy path.",
                     "required_fields": ["cloud_skill_id", "local_category_path"],
                     "optional_fields": ["local_category"],
                 },
@@ -1510,7 +1517,7 @@ async def cloud_fetch_skill_detail(
                 {
                     "tool": "cloud_browse_skills",
                     "action": "import_skill",
-                    "reason": "Download/register this exact cloud skill after choosing a local package taxonomy path.",
+                    "reason": "Acquire this exact cloud Skill Candidate after choosing a local package taxonomy path.",
                     "required_fields": ["cloud_skill_id", "local_category_path"],
                     "optional_fields": ["local_category"],
                 }
@@ -1527,7 +1534,7 @@ async def cloud_import_skill(
     local_category: str | None = None,
     local_category_path: str | None = None,
 ) -> str:
-    """Download and register one exact cloud skill selected by the agent.
+    """Acquire one exact cloud Skill Candidate into quarantine.
 
     ``local_category_path`` is the agent-selected local package taxonomy path.
     It is independent from the cloud package path stored in the binding.
@@ -1588,15 +1595,101 @@ async def cloud_import_skill(
             "status": result.get("status", "success"),
             "next_actions": [
                 {
-                    "tool": "search_skills",
-                    "reason": "Confirm the imported skill participates in local retrieval.",
-                    "required_fields": ["query", "source"],
+                    "tool": "skill-engineering",
+                    "action": "inspect_validate_confirm",
+                    "reason": "Run real AUDIT Governance and Codex semantic confirmation against candidate_path.",
+                    "required_fields": ["candidate_path"],
+                },
+                {
+                    "tool": "cloud_browse_skills",
+                    "action": "install_candidate",
+                    "reason": "Continue only with the complete serialized Governance outcome for this exact Candidate.",
+                    "required_fields": ["candidate_id", "governance_outcome"],
                 }
             ],
         })
     except Exception as e:
         logger.error("cloud_import_skill failed: %s", e, exc_info=True)
         return _json_error(e, status="error")
+
+
+async def cloud_install_candidate(
+    candidate_id: str,
+    governance_outcome: Mapping[str, Any] | None,
+) -> str:
+    """Install one exact Candidate after formal Governance confirmation."""
+
+    candidate = str(candidate_id or "").strip()
+    if not candidate:
+        return _json_error(
+            "candidate_id is required",
+            status="error",
+            code="CANDIDATE_ID_REQUIRED",
+        )
+    required_evidence = (
+        "validation",
+        "semantic_confirmation",
+        "completion_receipt",
+    )
+    if not isinstance(governance_outcome, Mapping) or any(
+        not isinstance(governance_outcome.get(key), Mapping)
+        for key in required_evidence
+    ):
+        return _json_error(
+            "Complete validation, Codex semantic confirmation, and completion "
+            "receipt objects are required; a PASS flag or receipt alone is invalid.",
+            status="error",
+            code="COMPLETE_GOVERNANCE_OUTCOME_REQUIRED",
+        )
+
+    mapping_store = await _get_cloud_mapping_store()
+    try:
+        from openspace.cloud.candidate_install import install_candidate
+        from openspace.cloud.candidate_lifecycle import CandidateRepository
+
+        openspace = await _get_openspace()
+        registry = openspace.get_skill_registry()
+        if registry is None:
+            return _json_error(
+                "SkillRegistry is not initialized",
+                status="error",
+                code="SKILL_REGISTRY_REQUIRED",
+            )
+        skill_store = await _get_runtime_store()
+        repository = CandidateRepository(mapping_store.db_path.parent / "candidates")
+        result = await install_candidate(
+            candidate,
+            dict(governance_outcome),
+            repository=repository,
+            registry=registry,
+            skill_store=skill_store,
+            mapping_store=mapping_store,
+        )
+        payload = {
+            "status": result.status.value,
+            "installed": result.installed,
+            "candidate_id": result.candidate_id,
+            "skill_id": result.skill_id,
+            "installed_path": result.installed_path,
+            "installed_digest": result.installed_digest,
+            "receipt_digest": result.receipt_digest,
+            "error_code": result.error_code,
+            "error_message": result.error_message,
+        }
+        if result.installed:
+            payload["next_actions"] = [
+                {
+                    "tool": "search_skills",
+                    "reason": "Confirm the governed Skill participates in local retrieval.",
+                    "required_fields": ["query", "source"],
+                }
+            ]
+        return _json_ok(payload)
+    except Exception as e:
+        logger.error("cloud_install_candidate failed: %s", e, exc_info=True)
+        return _json_error(e, status="error")
+    finally:
+        mapping_store.close()
 
 
 async def cloud_import_package_bundle(
@@ -1615,26 +1708,18 @@ async def cloud_import_package_bundle(
         pkg = str(package_id or "").strip()
         if not pkg:
             return _json_error("package_id is required")
-        client = _get_cloud_client()
-        base_dir = _resolve_cloud_import_base_dir(target_dir)
-        result = await asyncio.to_thread(
-            client.import_package_bundle,
-            pkg,
-            base_dir,
-            audience=audience,
-        )
-        local_path = str(result.get("local_path") or "").strip()
-        package_dir = Path(local_path) if local_path else None
-        if package_dir is not None and package_dir.exists():
-            openspace = await _get_openspace()
-            _register_evidence_read_roots(openspace, package_dir)
-            registry = openspace.get_skill_registry()
-            if registry:
-                discovered = registry.discover_from_dirs([package_dir])
-                store = await _get_runtime_store(required=False)
-                if store and discovered:
-                    await store.sync_from_registry(discovered)
-                result["registered_skill_count"] = len(discovered)
+        mapping_store = await _get_cloud_mapping_store()
+        try:
+            client = _get_cloud_client(mapping_store=mapping_store)
+            base_dir = _resolve_cloud_import_base_dir(target_dir)
+            result = await asyncio.to_thread(
+                client.import_package_bundle,
+                pkg,
+                base_dir,
+                audience=audience,
+            )
+        finally:
+            mapping_store.close()
         result.setdefault("registered_skill_count", 0)
         return _json_ok(result)
     except Exception as e:
