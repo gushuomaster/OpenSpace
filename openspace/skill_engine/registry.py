@@ -732,6 +732,19 @@ class SkillRegistry:
         self._ensure_discovered()
         return self._skills.get(skill_id)
 
+    def unregister_skill(self, skill_id: str, *, expected_path: Path) -> bool:
+        """Remove one registered Skill only when its directory still matches."""
+
+        self._ensure_discovered()
+        current = self._skills.get(skill_id)
+        if current is None:
+            return False
+        if current.path.parent.resolve() != Path(expected_path).expanduser().resolve():
+            return False
+        self._skills.pop(skill_id, None)
+        self._content_cache.pop(skill_id, None)
+        return True
+
     def get_skill_by_name(self, name: str) -> Optional[SkillMeta]:
         """Get a skill by ``name`` (first match).  Use ``get_skill`` when possible."""
         self._ensure_discovered()

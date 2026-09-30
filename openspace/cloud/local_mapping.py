@@ -423,6 +423,53 @@ class CloudLocalMappingStore:
     def get_binding_by_cloud(self, cloud_skill_id: str) -> SkillCloudBinding | None:
         return self.get_skill_cloud_binding_by_cloud(cloud_skill_id)
 
+    def delete_import_state(
+        self,
+        local_skill_id: str,
+        *,
+        expected_cloud_skill_id: str,
+        expected_local_path: str | Path,
+    ) -> bool:
+        """Delete one imported Skill's binding and classification if still owned.
+
+        Compensation must not delete state that has since been rebound.  The
+        current cloud identity and resolved local path therefore act as a narrow
+        compare-and-delete guard for both rows.
+        """
+
+        self._ensure_open()
+        local_skill_id = _required_text(local_skill_id, "local_skill_id")
+        expected_cloud_skill_id = _required_text(
+            expected_cloud_skill_id,
+            "expected_cloud_skill_id",
+        )
+        expected_path = Path(expected_local_path).expanduser().resolve()
+        with self._mu:
+            with self._conn:
+                row = self._conn.execute(
+                    "SELECT cloud_skill_id, local_path "
+                    "FROM skill_cloud_bindings WHERE local_skill_id=?",
+                    (local_skill_id,),
+                ).fetchone()
+                if row is None:
+                    return False
+                actual_cloud_skill_id = str(row["cloud_skill_id"] or "")
+                actual_path = Path(str(row["local_path"] or "")).expanduser().resolve()
+                if (
+                    actual_cloud_skill_id != expected_cloud_skill_id
+                    or actual_path != expected_path
+                ):
+                    return False
+                self._conn.execute(
+                    "DELETE FROM skill_local_classifications WHERE local_skill_id=?",
+                    (local_skill_id,),
+                )
+                deleted = self._conn.execute(
+                    "DELETE FROM skill_cloud_bindings WHERE local_skill_id=?",
+                    (local_skill_id,),
+                )
+                return deleted.rowcount > 0
+
     def resolve_parent_local_ids_to_cloud_ids(
         self,
         parent_local_skill_ids: Iterable[str],
