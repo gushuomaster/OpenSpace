@@ -1,7 +1,7 @@
 # Skill Candidate Governance Lifecycle Design
 
 设计日期：2026-09-30
-状态：待用户复核
+状态：设计方向已批准；实现机制待基于现有 primitive 验证
 范围：OpenSpace 远程 Skill Candidate 的 Acquisition、Quarantine、Governance、Install/Register
 
 ## 1. 目标
@@ -347,14 +347,14 @@ OpenSpace 收到 verifier PASS 后，重新计算 Candidate manifest digest 和 
 
 ## 9. Install Transaction
 
-OpenSpace 的 Candidate install boundary 是正式 Skill mutation owner。步骤如下：
+OpenSpace 的 Candidate install boundary 是正式 Skill mutation owner。下列步骤冻结安全顺序和可观察结果，不冻结 transaction/journal 的具体内部形态：
 
 1. 根据 `candidate_id` 加载 immutable manifest、state 和 Candidate Governance binding；
 2. 拒绝不处于可治理状态或已安装的 Candidate；
 3. 验证 quarantine 和正式 Skill roots 不重叠；
 4. 重新计算 `candidate_id`、manifest digest 和 payload digest，并调用窄 Governance verifier；
 5. 将 `BLOCKED`、`INCOMPLETE` 或 mismatch 写入 state 后返回，不触碰正式环境；
-6. 对预期目标获取按 target/skill ID 隔离的安装锁，并创建 durable install journal；
+6. 对预期目标获取按 target/skill ID 隔离的并发保护；
 7. 拒绝已存在的 target、Skill ID 或 binding 冲突；
 8. 要求 binding 中的 candidate identity、manifest digest、canonical payload path、receipt digest 和 inspection/validation identity 与本次输入完全一致；
 9. 将 payload 复制到正式父目录下的 sibling temporary directory；
@@ -362,12 +362,12 @@ OpenSpace 的 Candidate install boundary 是正式 Skill mutation owner。步骤
 11. 以同文件系统 atomic rename 物化最终目录；
 12. 验证最终目录 digest 仍等于 receipt；
 13. 写入 Cloud/local binding 和 SkillStore；
-14. 进入最终 visibility critical section：提交 Registry 可见性并将 Candidate state 原子更新为 `INSTALLED`，记录 installed path、receipt digest 和 installed digest；Registry-backed readers 在该临界区结束前不得观察新条目；
-15. 标记 install journal complete 并清理 journal。
+14. 提交 Registry 可见性并将 Candidate state 更新为 `INSTALLED`，记录 installed path、receipt digest 和 installed digest；在成功响应前，两者必须处于一致的已安装状态；
+15. 清理本次安装产生且不再需要的临时状态。
 
 Registry 在 transaction 的最后阶段才可见，避免 SkillStore 失败后仍被 Runtime 选择。实现应把现有 `register_skill_dir()` 内的“解析/安全检查”和“写入 Registry”拆成可复用的 prepare/commit 两步，或提供等价的非可见预检；不得复制一份独立 Skill parser。
 
-文件系统、SQLite、Candidate state 和内存 Registry 无法依赖单一底层原子事务，因此 durable journal 是必要的恢复边界。进程启动时必须先恢复未完成 install journal，再扫描或暴露正式 Skill roots：删除或回滚仅由该 journal 证明为本次 transaction 创建且 identity/digest 匹配的 binding、SkillStore record 和目录；不得根据路径猜测删除。这样异常补偿和进程中断都不会把未完成 Candidate 留给自动发现流程。
+实现计划必须先检查并复用 OpenSpace 当前的 atomic filesystem、Registry、SkillStore transaction/rollback 和启动扫描 primitive。只有测试证明这些 primitive 无法在异常或进程中断场景维持上述不变量时，才增加 durable journal、visibility critical section 或 startup recovery abstraction。无论采用哪种机制，恢复或回滚都只能处理有本次 operation ownership 且 identity/digest 匹配的对象；不得根据路径猜测删除。
 
 ### 9.1 补偿回滚
 
@@ -520,8 +520,10 @@ Repository 外部是否存在直接 Python 消费者，当前代码库没有可�
 2. 一份 immutable Candidate manifest、一份 mutable state record，以及一份 verifier PASS 后生成的 immutable Candidate Governance binding；
 3. 一个不位于正式 Skill roots 下的 quarantine root resolver；
 4. 一个基于现有 skill-engineering primitives 的窄 receipt verifier；
-5. 一个按 target/Skill identity 隔离、带 durable journal 和启动恢复的 install transaction；
-6. Registry 的非可见 prepare、最终 visibility critical section 与补偿路径，避免同步失败或进程中断时提前暴露 Skill。
+5. 一个按 target/Skill identity 隔离的最小 install coordination boundary；
+6. 仅在现有 primitive 经失败测试证明不足时，增加 durable journal、Registry prepare/commit、visibility critical section 或 startup recovery。
+
+其中 1-4 直接来自两阶段 lifecycle 和 candidate-bound receipt；5 只冻结“安装协调必须有唯一 owner”，不预设新 transaction framework；6 是候选 HOW，不是默认交付项。实现遵循 `reuse existing primitive > minimal extension > new abstraction`，Candidate manifest、state 和 binding 也只保留当前不变量需要的字段。
 
 不新增：
 
@@ -554,7 +556,7 @@ Repository 外部是否存在直接 Python 消费者，当前代码库没有可�
 - Governance 后修改 payload，安装得到 `INTEGRITY_MISMATCH`；
 - copy 后篡改或 digest mismatch，安装补偿且不注册；
 - SkillStore/Registry 注入失败触发补偿，不留下可选择 Skill；
-- 未完成 install journal 在下一次启动、正式 root 扫描前完成受控恢复；
+- 若失败测试证明必须引入 install journal，则未完成 journal 在下一次启动、正式 root 扫描前完成受控恢复；
 - 最终安装 digest 等于 receipt candidate digest；
 - 旧 `import_skill` action 返回 governance-required，而不是 `local_path`/registered success；
 - CLI downloader 和 package bundle 无法绕过治理。
