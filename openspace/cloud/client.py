@@ -10,6 +10,7 @@ Provides both low-level HTTP operations and higher-level workflows:
 from __future__ import annotations
 
 import difflib
+import hashlib
 import io
 import json
 import logging
@@ -25,6 +26,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
 
 from openspace.cloud.base import cloud_api_url
+from openspace.cloud.candidate_lifecycle import (
+    CandidateRepository,
+    SourceIntegrityStatus,
+)
 from openspace.cloud.config import CloudConfig, CloudConfigError, require_cloud_agent_key
 from openspace.cloud.local_mapping import (
     CLOUD_SKILL_INFO_FILENAME,
@@ -58,6 +63,15 @@ _TEXT_EXTENSIONS = frozenset({
     ".js", ".jsx", ".ts", ".tsx", ".html", ".css", ".xml", ".csv",
     ".ini", ".cfg", ".rst",
 })
+
+
+def _normalized_sha256(value: Any) -> str | None:
+    text = str(value or "").strip().lower()
+    if not text:
+        return None
+    if text.startswith("sha256:"):
+        text = text.removeprefix("sha256:")
+    return text
 
 
 class CloudError(Exception):
@@ -278,6 +292,10 @@ class OpenSpaceClient:
         if self._mapping_store is None:
             self._mapping_store = CloudLocalMappingStore()
         return self._mapping_store
+
+    def _candidate_repository(self) -> CandidateRepository:
+        store = self._local_mapping_store()
+        return CandidateRepository(store.db_path.parent / "candidates")
 
     def _request_api(
         self,
@@ -982,9 +1000,10 @@ class OpenSpaceClient:
         local_category: str | None = None,
         local_category_path: str | None = None,
     ) -> Dict[str, Any]:
-        """Download a v2 cloud skill bundle and extract it locally."""
+        """Acquire a v2 cloud skill bundle into Candidate quarantine."""
         logger.info(f"import_cloud_skill: fetching metadata for {cloud_skill_id}")
         store = self._local_mapping_store()
+        repository = self._candidate_repository()
         skill_data = self.fetch_cloud_skill(cloud_skill_id)
         metadata = skill_data.get("authored_metadata")
         if not isinstance(metadata, dict):
@@ -996,132 +1015,113 @@ class OpenSpaceClient:
         )
         skill_name = self._safe_skill_dir_name(str(skill_name), cloud_skill_id)
         target_root = target_dir.resolve()
-        target_root.mkdir(parents=True, exist_ok=True)
         existing_binding = store.get_binding_by_cloud(cloud_skill_id)
-        if existing_binding:
-            existing_dir = Path(existing_binding.local_path)
-            if existing_dir.exists() and (existing_dir / SKILL_FILENAME).exists():
-                classification = self._classify_imported_skill(
-                    store,
-                    existing_dir,
-                    local_skill_id=existing_binding.local_skill_id,
-                    cloud_package_path=(
-                        skill_data.get("package_path")
-                        or existing_binding.current_package_path
-                        or existing_binding.package_path_at_pull
-                    ),
-                    local_category=local_category,
-                    local_category_path=local_category_path,
-                    origin="imported",
-                )
-                materialized_dir = self._materialize_classified_skill(
-                    existing_dir,
-                    classification,
-                    skills_root=existing_dir.parent,
-                )
-                if materialized_dir != existing_dir:
-                    existing_binding = replace(
-                        existing_binding,
-                        local_path=str(materialized_dir),
-                        local_content_hash=compute_local_content_hash(materialized_dir),
-                    )
-                    store.upsert_binding(existing_binding)
-                    write_cloud_skill_info(materialized_dir, existing_binding)
-                    existing_dir = materialized_dir
-                return {
-                    "status": "already_exists",
-                    "api_version": "v2",
-                    "skill_id": existing_binding.local_skill_id,
-                    "local_skill_id": existing_binding.local_skill_id,
-                    "cloud_skill_id": cloud_skill_id,
-                    "name": skill_name,
-                    "description": skill_data.get("summary") or metadata.get("description", ""),
-                    "package_id": skill_data.get("package_id") or existing_binding.current_package_id,
-                    "package_path": skill_data.get("package_path") or existing_binding.current_package_path,
-                    "cloud_package_path": skill_data.get("package_path") or existing_binding.current_package_path,
-                    "local_path": str(existing_dir),
-                    "local_category_path": (
-                        classification.get("local_category_path")
-                        if isinstance(classification, dict)
-                        else None
-                    ),
-                    "classification": classification,
-                }
-            local_skill_id = existing_binding.local_skill_id
-        else:
-            local_skill_id = generate_local_skill_id(skill_name)
-
-        skill_dir = self._target_dir_for_cloud_skill(
-            target_root,
-            skill_name,
-            cloud_skill_id,
-            (
-                existing_binding.local_path
-                if existing_binding
-                and Path(existing_binding.local_path).exists()
-                else ""
-            ),
+        local_skill_id = (
+            existing_binding.local_skill_id
+            if existing_binding
+            else generate_local_skill_id(skill_name)
         )
-        if not skill_dir.is_relative_to(target_root):
-            raise CloudError(f"Skill name {skill_name!r} escapes target directory")
-
-        if skill_dir.exists():
-            raise CloudError(f"Target skill directory already exists: {skill_dir}")
 
         logger.info(f"import_cloud_skill: downloading bundle for {cloud_skill_id}")
         zip_data = self.download_skill_bundle(cloud_skill_id, audience=audience)
+        source_bundle_sha256 = hashlib.sha256(zip_data).hexdigest()
+        declared_sha256 = _normalized_sha256(skill_data.get("manifest_hash"))
+        source_integrity_status = (
+            SourceIntegrityStatus.PROVEN
+            if declared_sha256 == source_bundle_sha256
+            else SourceIntegrityStatus.MISMATCH
+            if declared_sha256 is not None
+            else SourceIntegrityStatus.UNPROVEN
+        )
+        source_manifest_hash = (
+            f"sha256:{declared_sha256}" if declared_sha256 is not None else None
+        )
 
+        repository.state_root.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(
-            prefix=".openspace-cloud-skill-",
-            dir=str(target_root),
+            prefix=".openspace-candidate-source-",
+            dir=str(repository.state_root),
         ) as tmp:
-            staging_dir = Path(tmp)
-            self._extract_zip(zip_data, staging_dir)
-            skill_root = self._find_extracted_skill_root(staging_dir)
+            staging_root = Path(tmp)
+            extracted_root = staging_root / "extracted"
+            prepared_root = staging_root / "prepared" / skill_name
+            self._extract_zip(zip_data, extracted_root)
+            skill_root = self._find_extracted_skill_root(extracted_root)
             if skill_root is None:
                 raise CloudError("Downloaded skill bundle does not contain SKILL.md")
-            self._copy_extracted_skill_tree(skill_root, skill_dir)
+            self._copy_extracted_skill_tree(skill_root, prepared_root)
+            write_local_skill_id(prepared_root, local_skill_id)
 
-        write_local_skill_id(skill_dir, local_skill_id)
-        classification = self._classify_imported_skill(
-            store,
-            skill_dir,
-            local_skill_id=local_skill_id,
-            cloud_package_path=skill_data.get("package_path"),
-            local_category=local_category,
-            local_category_path=local_category_path,
-            origin="imported",
-        )
-        skill_dir = self._materialize_classified_skill(
-            skill_dir,
-            classification,
-            skills_root=target_root,
-        )
-        now = utc_now_iso()
-        binding = CloudSkillBinding(
-            local_skill_id=local_skill_id,
-            cloud_skill_id=cloud_skill_id,
-            local_path=str(skill_dir),
-            package_id_at_pull=skill_data.get("package_id"),
-            package_path_at_pull=skill_data.get("package_path"),
-            package_snapshot_version_at_pull=skill_data.get("snapshot_version"),
-            current_package_id=skill_data.get("package_id"),
-            current_package_path=skill_data.get("package_path"),
-            manifest_hash=skill_data.get("manifest_hash"),
-            local_content_hash=compute_local_content_hash(skill_dir),
-            sync_state="clean",
-            last_pulled_at=now,
-        )
-        store.upsert_binding(binding)
-        write_cloud_skill_info(skill_dir, binding)
+            from openspace.cloud.skill_classification import classify_skill_dir
+
+            classification_result = classify_skill_dir(
+                prepared_root,
+                local_skill_id=local_skill_id,
+                cloud_package_path=(
+                    str(skill_data["package_path"])
+                    if skill_data.get("package_path")
+                    else None
+                ),
+                local_category=local_category,
+                local_category_path=local_category_path,
+                origin="imported",
+            )
+            classification = classification_result.to_payload()
+            local_content_hash = compute_local_content_hash(prepared_root)
+            write_cloud_skill_info(
+                prepared_root,
+                CloudSkillBinding(
+                    local_skill_id=local_skill_id,
+                    cloud_skill_id=cloud_skill_id,
+                    package_id_at_pull=skill_data.get("package_id"),
+                    package_path_at_pull=skill_data.get("package_path"),
+                    package_snapshot_version_at_pull=skill_data.get("snapshot_version"),
+                    current_package_id=skill_data.get("package_id"),
+                    current_package_path=skill_data.get("package_path"),
+                    manifest_hash=source_manifest_hash,
+                    local_content_hash=local_content_hash,
+                    sync_state="clean",
+                ),
+            )
+            acquired_at = utc_now_iso()
+            manifest = repository.quarantine(
+                prepared_root,
+                cloud_skill_id=cloud_skill_id,
+                source_bundle_sha256=source_bundle_sha256,
+                source_manifest_hash=source_manifest_hash,
+                source_integrity_status=source_integrity_status,
+                local_content_hash=local_content_hash,
+                final_skill_id=local_skill_id,
+                intended_install_parent=target_root,
+                local_category=classification_result.category,
+                local_category_path=classification_result.local_category_path,
+                package_id=(
+                    str(skill_data["package_id"])
+                    if skill_data.get("package_id") is not None
+                    else None
+                ),
+                package_path=(
+                    str(skill_data["package_path"])
+                    if skill_data.get("package_path") is not None
+                    else None
+                ),
+                package_snapshot_version=(
+                    str(skill_data["snapshot_version"])
+                    if skill_data.get("snapshot_version") is not None
+                    else None
+                ),
+                acquired_at=acquired_at,
+            )
+
+        candidate_path = repository.payload_path(manifest)
 
         logger.info(
-            f"import_cloud_skill: {skill_name} [{cloud_skill_id}] -> {skill_dir} "
-            f"({len(self._collect_files(skill_dir))} files)"
+            f"import_cloud_skill: {skill_name} [{cloud_skill_id}] -> {candidate_path} "
+            f"({len(self._collect_files(candidate_path))} files; governance required)"
         )
 
         return {
-            "status": "success",
+            "status": "governance_required",
             "api_version": "v2",
             "skill_id": local_skill_id,
             "local_skill_id": local_skill_id,
@@ -1131,14 +1131,17 @@ class OpenSpaceClient:
             "package_id": skill_data.get("package_id"),
             "package_path": skill_data.get("package_path"),
             "cloud_package_path": skill_data.get("package_path"),
-            "local_path": str(skill_dir),
-            "local_category_path": (
-                classification.get("local_category_path")
-                if isinstance(classification, dict)
-                else None
-            ),
+            "candidate_id": manifest.candidate_id,
+            "candidate_path": str(candidate_path),
+            "candidate_digest": manifest.candidate_digest,
+            "source_integrity_status": manifest.source_integrity_status.value,
+            "registered": False,
+            "local_category_path": classification_result.local_category_path,
             "classification": classification,
-            "files": [str(path.relative_to(skill_dir)) for path in self._collect_files(skill_dir)],
+            "files": [
+                str(path.relative_to(candidate_path))
+                for path in self._collect_files(candidate_path)
+            ],
         }
 
     def import_package_bundle(
