@@ -354,35 +354,46 @@ OpenSpace 的 Candidate install boundary 是正式 Skill mutation owner。下列
 3. 验证 quarantine 和正式 Skill roots 不重叠；
 4. 重新计算 `candidate_id`、manifest digest 和 payload digest，并调用窄 Governance verifier；
 5. 将 `BLOCKED`、`INCOMPLETE` 或 mismatch 写入 state 后返回，不触碰正式环境；
-6. 对预期目标获取按 target/skill ID 隔离的并发保护；
+6. 通过 Candidate state compare-before-write 获取本 Candidate 的安装 ownership；
 7. 拒绝已存在的 target、Skill ID 或 binding 冲突；
 8. 要求 binding 中的 candidate identity、manifest digest、canonical payload path、receipt digest 和 inspection/validation identity 与本次输入完全一致；
 9. 将 payload 复制到正式父目录下的 sibling temporary directory；
 10. 验证 temporary directory digest 等于 receipt candidate digest；
 11. 以同文件系统 atomic rename 物化最终目录；
 12. 验证最终目录 digest 仍等于 receipt；
-13. 写入 Cloud/local binding 和 SkillStore；
-14. 提交 Registry 可见性并将 Candidate state 更新为 `INSTALLED`，记录 installed path、receipt digest 和 installed digest；在成功响应前，两者必须处于一致的已安装状态；
+13. 使用现有 `load_skill_from_dir()` 做非 Registry 可见的 parser 预检，写入 SkillStore，再写 Cloud/local binding 与 classification；
+14. 使用现有 `register_skill_dir()` 提交 Registry 可见性，并将 Candidate state 更新为 `INSTALLED`，记录 installed path、receipt digest 和 installed digest；在成功响应前，两者必须处于一致的已安装状态；
 15. 清理本次安装产生且不再需要的临时状态。
 
-Registry 在 transaction 的最后阶段才可见，避免 SkillStore 失败后仍被 Runtime 选择。实现应把现有 `register_skill_dir()` 内的“解析/安全检查”和“写入 Registry”拆成可复用的 prepare/commit 两步，或提供等价的非可见预检；不得复制一份独立 Skill parser。
+Registry 在 transaction 的最后阶段才可见，避免 SkillStore 失败后仍被 Runtime 选择。实现复用了现有 `load_skill_from_dir()` 作为非可见 parser 预检，并复用 `register_skill_dir()` 提交可见性；没有复制独立 Skill parser，也没有新增 Registry prepare/commit framework。
 
-实现计划必须先检查并复用 OpenSpace 当前的 atomic filesystem、Registry、SkillStore transaction/rollback 和启动扫描 primitive。只有测试证明这些 primitive 无法在异常或进程中断场景维持上述不变量时，才增加 durable journal、visibility critical section 或 startup recovery abstraction。无论采用哪种机制，恢复或回滚都只能处理有本次 operation ownership 且 identity/digest 匹配的对象；不得根据路径猜测删除。
+实现已优先复用 OpenSpace 当前的 atomic filesystem、Registry、SkillStore 和 SQLite transaction primitive。同步失败注入没有证明需要 durable journal、visibility critical section、startup recovery 或新 Registry transaction framework，因此本轮未增加这些抽象。进程被强制终止后的 durable recovery 不是本轮已声明完成的能力；若未来真实 crash test 证明当前 primitive 无法维持新增不变量，应作为新的高影响边界单独决策。无论采用哪种机制，恢复或回滚都只能处理有本次 operation ownership 且 identity/digest 匹配的对象；不得根据路径猜测删除。
 
-### 9.1 补偿回滚
+### 9.1 实现证据
+
+`tests/cloud/test_candidate_install.py` 对 SkillStore、Cloud mapping、Registry visibility 和最终 Candidate state write 四个同步失败点逐一注入故障。四种失败均得到 `INSTALL_FAILED`，且正式目录、Registry、SkillStore、binding/classification 中不留下当前 Candidate；无关 Skill 未被删除，quarantine 与 Candidate Governance binding 保留。
+
+现有 primitive 足以通过这些失败测试，只补充了两个 ownership-checked 窄操作：
+
+- `CloudLocalMappingStore.delete_import_state()`：在一个 SQLite transaction 中比较 cloud ID 与 resolved local path 后删除 binding/classification；
+- `SkillRegistry.unregister_skill()`：仅在 `skill_id` 与 resolved Skill directory 同时匹配时删除 Registry/cache entry。
+
+目标目录仍由 sibling copy + digest verification + `os.replace()` 物化；Candidate state transition 的 compare-before-write 防止同一 Candidate 重复取得安装 ownership。未新增 install journal、startup recovery、Registry prepare/commit 或通用 transaction coordinator。
+
+### 9.2 补偿回滚
 
 安装步骤发生异常时，按反向顺序补偿：
 
 ```text
 Registry entry
+  -> Cloud/local binding + classification
   -> SkillStore record
-  -> Cloud/local binding
   -> formal filesystem directory
 ```
 
 回滚只处理本次 transaction 创建且 identity/digest 匹配的对象。不得覆盖或删除预先存在的 Skill。quarantine payload 和 Governance evidence 保留，Candidate state 记录 `INSTALL_FAILED` 与非敏感失败原因。
 
-如果补偿本身失败，Candidate 仍不得标记为 `INSTALLED`；返回明确的 recovery-required error，并保留足够 ownership/digest 信息供受控恢复。
+当前实现覆盖并验证同步安装步骤失败后的补偿；Candidate 不会在这些路径上标记为 `INSTALLED`。补偿 primitive 自身故障或进程强制终止后的 durable recovery 未通过新增 journal 伪装为已解决能力。
 
 ## 10. 失败语义
 
@@ -514,16 +525,24 @@ Repository 外部是否存在直接 Python 消费者，当前代码库没有可�
 
 ## 13. 新增复杂度
 
-本设计只引入以下不可避免的复杂度：
+最终实现只引入以下经不变量和测试证明必要的复杂度：
 
 1. 一个 OpenSpace-owned Candidate lifecycle orchestration boundary，用于跨调用保存 acquisition/install 状态；
 2. 一份 immutable Candidate manifest、一份 mutable state record，以及一份 verifier PASS 后生成的 immutable Candidate Governance binding；
-3. 一个不位于正式 Skill roots 下的 quarantine root resolver；
+3. `CandidateRepository` 内一个不位于正式 Skill roots 下的 quarantine path resolver；
 4. 一个基于现有 skill-engineering primitives 的窄 receipt verifier；
-5. 一个按 target/Skill identity 隔离的最小 install coordination boundary；
-6. 仅在现有 primitive 经失败测试证明不足时，增加 durable journal、Registry prepare/commit、visibility critical section 或 startup recovery。
+5. 一个 receipt-gated install orchestration function，以及 SQLite mapping 与 Registry 各一个 ownership-checked 补偿操作。
 
-其中 1-4 直接来自两阶段 lifecycle 和 candidate-bound receipt；5 只冻结“安装协调必须有唯一 owner”，不预设新 transaction framework；6 是候选 HOW，不是默认交付项。实现遵循 `reuse existing primitive > minimal extension > new abstraction`，Candidate manifest、state 和 binding 也只保留当前不变量需要的字段。
+其中 1-4 直接来自两阶段 lifecycle 和 candidate-bound receipt；5 是四个同步失败注入测试证明需要的最小 extension。安装 ownership 复用 Candidate state CAS，filesystem commit 复用 sibling `os.replace()`，parser/visibility 复用 `load_skill_from_dir()` / `register_skill_dir()`，持久化复用 SkillStore 与 SQLite transaction。Candidate manifest、state 和 binding 只保留当前不变量需要的字段。
+
+以下候选 HOW 经测试证明本轮不需要，因而没有实现：
+
+- durable install journal；
+- startup recovery subsystem；
+- Registry prepare/commit framework；
+- visibility critical section 或通用 transaction coordinator。
+
+这体现了 `reuse existing primitive > minimal extension > new abstraction`：没有用未来未知 crash/recovery 需求扩展当前公共协议。若后续真实 crash/concurrency 测试产生新的 RED，必须引用该失败并重新评估最小机制，而不是把本轮选择视为永久禁止。
 
 不新增：
 
