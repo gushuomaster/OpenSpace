@@ -7,7 +7,7 @@ import shutil
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from engine.inventory import digest_tree
 
@@ -137,6 +137,7 @@ async def install_candidate(
     registry: SkillRegistry,
     skill_store: SkillStore,
     mapping_store: CloudLocalMappingStore,
+    after_formal_placement: Callable[[Path], None] | None = None,
 ) -> CandidateInstallResult:
     """Install one Candidate only after recomputing formal Governance PASS."""
 
@@ -286,6 +287,8 @@ async def install_candidate(
         os.replace(temporary, final_path)
         temporary = None
         final_created = True
+        if after_formal_placement is not None:
+            after_formal_placement(final_path)
         installed_digest = digest_tree(final_path)
         if installed_digest != governance.receipt.candidate_digest:
             raise CandidateIntegrityError("installed Candidate digest changed")
