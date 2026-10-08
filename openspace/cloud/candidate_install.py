@@ -6,7 +6,7 @@ import os
 import shutil
 import uuid
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any, Mapping
 
 from engine.inventory import digest_tree
@@ -22,6 +22,7 @@ from openspace.cloud.candidate_lifecycle import (
     CandidateRepository,
     CandidateStatus,
     SourceIntegrityStatus,
+    formal_candidate_path,
 )
 from openspace.cloud.local_mapping import (
     CloudLocalMappingStore,
@@ -75,18 +76,6 @@ def _paths_overlap(first: Path, second: Path) -> bool:
         or first.is_relative_to(second)
         or second.is_relative_to(first)
     )
-
-
-def _final_path(manifest: CandidateManifest) -> Path:
-    install_parent = Path(manifest.intended_install_parent).expanduser().resolve()
-    raw_category = manifest.local_category_path.replace("\\", "/")
-    category = PurePosixPath(raw_category)
-    if category.is_absolute() or any(part in {"", ".", ".."} for part in category.parts):
-        raise CandidateIntegrityError("Candidate placement is not a safe relative path")
-    target = install_parent.joinpath(*category.parts, manifest.final_directory_name).resolve()
-    if not target.is_relative_to(install_parent):
-        raise CandidateIntegrityError("Candidate placement escapes intended install root")
-    return target
 
 
 def _transition_governance_result(
@@ -224,7 +213,7 @@ async def install_candidate(
             error_message=governance.error_message,
         )
 
-    final_path = _final_path(manifest)
+    final_path = formal_candidate_path(manifest)
     install_parent = Path(manifest.intended_install_parent).expanduser().resolve()
     quarantine_root = repository.state_root.resolve()
     if _paths_overlap(install_parent, quarantine_root):

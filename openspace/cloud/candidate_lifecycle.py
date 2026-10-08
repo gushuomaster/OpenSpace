@@ -10,7 +10,7 @@ import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from enum import StrEnum
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Mapping
 
 from engine.inventory import digest_tree
@@ -179,6 +179,23 @@ def candidate_identity(
     return f"candidate_{digest}"
 
 
+def formal_candidate_path(manifest: CandidateManifest) -> Path:
+    """Return the only formal directory owned by a Candidate manifest."""
+
+    install_parent = Path(manifest.intended_install_parent).expanduser().resolve()
+    category = PurePosixPath(manifest.local_category_path.replace("\\", "/"))
+    if category.is_absolute() or any(
+        part in {"", ".", ".."} for part in category.parts
+    ):
+        raise CandidateIntegrityError("Candidate placement is not a safe relative path")
+    target = install_parent.joinpath(
+        *category.parts, manifest.final_directory_name
+    ).resolve()
+    if not target.is_relative_to(install_parent):
+        raise CandidateIntegrityError("Candidate placement escapes intended install root")
+    return target
+
+
 def _manifest_to_data(manifest: CandidateManifest) -> dict[str, Any]:
     data = asdict(manifest)
     data["source_integrity_status"] = manifest.source_integrity_status.value
@@ -230,6 +247,19 @@ class CandidateRepository:
 
     def governance_binding_path(self, candidate_id: str) -> Path:
         return self.candidate_dir(candidate_id) / "governance" / "candidate-binding.json"
+
+    def candidate_ids(self) -> tuple[str, ...]:
+        """Enumerate persisted Candidate record names without loading their contents."""
+
+        if not self.quarantine_root.is_dir():
+            return ()
+        return tuple(
+            sorted(
+                entry.name
+                for entry in self.quarantine_root.iterdir()
+                if entry.name.startswith("candidate_")
+            )
+        )
 
     def quarantine(
         self,
@@ -515,4 +545,5 @@ __all__ = [
     "SourceIntegrityStatus",
     "candidate_identity",
     "canonical_json_digest",
+    "formal_candidate_path",
 ]
