@@ -889,6 +889,27 @@ class OpenSpaceRuntime:
                         await skill_store.sync_from_registry(
                             self.state.skill_registry.list_skills()
                         )
+                        # Reconcile interrupted cloud Candidate installs after the
+                        # Registry/Store are ready, before runtime publication.
+                        from openspace.cloud.candidate_recovery import (
+                            reconcile_installing_candidates,
+                        )
+                        from openspace.cloud.local_mapping import CloudLocalMappingStore
+                        from openspace.cloud.candidate_lifecycle import CandidateRepository
+
+                        runtime_state_root = Path(skill_store.db_path).expanduser().resolve().parent
+                        mapping_store = CloudLocalMappingStore(runtime_state_root / "openspace.db")
+                        try:
+                            recovery_results = await reconcile_installing_candidates(
+                                repository=CandidateRepository(runtime_state_root / "candidates"),
+                                registry=self.state.skill_registry,
+                                skill_store=skill_store,
+                                mapping_store=mapping_store,
+                            )
+                            if recovery_results:
+                                logger.info("✓ Candidate startup reconciliation: %s", recovery_results)
+                        finally:
+                            mapping_store.close()
                         self.register_skill_evidence_read_roots()
 
                     self.state.grounding_agent._skill_store = skill_store
