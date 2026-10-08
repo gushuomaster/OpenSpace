@@ -468,8 +468,9 @@ def test_captured_authoring_uses_contract_without_audit_tools(tmp_path) -> None:
 
         def __init__(self):
             self.available_tools = None
+            self.retry_calls = 0
 
-        async def _run_evolution_loop(self, _prompt, ctx):
+        async def run_staged_authoring_loop(self, _prompt, ctx):
             self.available_tools = ctx.available_tools
             return SimpleNamespace(
                 edit_content=(
@@ -482,6 +483,22 @@ def test_captured_authoring_uses_contract_without_audit_tools(tmp_path) -> None:
                 eval_plan={},
                 change_summary="Decode one float.",
             )
+
+        async def apply_staged_authoring_with_retry(
+            self,
+            *,
+            apply_fn,
+            initial_content,
+            **_kwargs,
+        ):
+            self.retry_calls += 1
+            return apply_fn(initial_content)
+
+        async def _run_evolution_loop(self, *_args, **_kwargs):
+            raise AssertionError("staged authoring must not call legacy private entrypoints")
+
+        async def _apply_with_retry(self, *_args, **_kwargs):
+            raise AssertionError("staged authoring must not call legacy private entrypoints")
 
     evolver = Evolver()
     backend = SkillEvolverAuthoringBackend(
@@ -526,6 +543,8 @@ def test_captured_authoring_uses_contract_without_audit_tools(tmp_path) -> None:
 
     assert result.status == "staged"
     assert evolver.available_tools == []
+    assert evolver.retry_calls == 1
+    assert not (tmp_path / "skills").exists()
 
 
 def test_secondary_frontmatter_is_rejected_but_fenced_example_is_allowed() -> None:

@@ -437,6 +437,34 @@ class SkillEvolver:
             kwargs["max_tokens"] = self._max_tokens
         return await self._llm_client.call_model_with_fallback(**kwargs)
 
+    async def run_staged_authoring_loop(
+        self,
+        prompt: str,
+        ctx: EvolutionContext,
+    ) -> Optional[_EvolutionFinalOutput]:
+        """Run the shared authoring loop without entering legacy mutation."""
+        return await self._run_evolution_loop(prompt, ctx)
+
+    async def apply_staged_authoring_with_retry(
+        self,
+        *,
+        apply_fn,
+        initial_content: str,
+        skill_dir: Path,
+        ctx: EvolutionContext,
+        prompt: str,
+        cleanup_on_retry: Optional[Path] = None,
+    ) -> Optional[SkillEditResult]:
+        """Apply a staged edit with the existing retry and validation semantics."""
+        return await self._apply_with_retry(
+            apply_fn=apply_fn,
+            initial_content=initial_content,
+            skill_dir=skill_dir,
+            ctx=ctx,
+            prompt=prompt,
+            cleanup_on_retry=cleanup_on_retry,
+        )
+
     async def wait_background(self) -> None:
         """Await all outstanding background evolution tasks.
 

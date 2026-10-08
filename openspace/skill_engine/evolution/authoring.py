@@ -255,7 +255,7 @@ class SkillEvolverAuthoringBackend:
             capture_dir=_capture_root(packet),
         )
 
-        evolution_output = await self.evolver._run_evolution_loop(prompt, ctx)
+        evolution_output = await self.evolver.run_staged_authoring_loop(prompt, ctx)
         if evolution_output is None:
             return failed("evolution authoring produced no usable finalization")
 
@@ -466,7 +466,7 @@ class SkillEvolverAuthoringBackend:
                 return result
             target_dir = capture_root / proposed_name
 
-        retry = getattr(self.evolver, "_apply_with_retry", None)
+        retry = getattr(self.evolver, "apply_staged_authoring_with_retry", None)
         if callable(retry):
             result = await retry(
                 apply_fn=apply_fn,

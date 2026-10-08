@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from engine.inventory import digest_tree
+from engine.candidate_contract import digest_tree
 
 from openspace.cloud.candidate_governance import (
     CandidateGovernanceError,

@@ -13,7 +13,7 @@ from enum import StrEnum
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Mapping
 
-from engine.inventory import digest_tree
+from engine.candidate_contract import digest_tree
 
 
 _SCHEMA_VERSION = "1.0"
