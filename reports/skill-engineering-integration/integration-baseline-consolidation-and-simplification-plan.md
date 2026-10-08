@@ -3,15 +3,15 @@
 日期：2026-10-08
 
 审计基线：`codex/e2e-skill-functional-closure@76262da82c4bd2fca553f323c67913d0e44e96eb`
-skill-engineering 本地修复候选：`codex/baseline-wheel-policy-package@1c1c44225ba46efc96add761a30c7c9b04aa5270`
+skill-engineering 已发布修复 revision：`codex/baseline-wheel-policy-package@1c1c44225ba46efc96add761a30c7c9b04aa5270`
 
 ## 结论先行
 
 统一代码候选已经识别：`codex/e2e-skill-functional-closure` 是 `codex/integrate-skill-engineering` 的严格后继，包含全部 12 个 End-to-End Functional Closure 提交；本轮新增的第 13 个提交只补齐了已证实的 wheel packaging 缺失，并把依赖 contract test 扩展为真实默认 Gate policy smoke。
 
-在同一受控、非 editable 的本地 exact-SHA 安装中，Candidate lifecycle、Local miss 显式 continuation、Candidate visibility、crash reconciliation、restart/runtime reuse、Evolution Governance 以及默认 Gate policy 均已通过新鲜验证。正式交付基线仍不能标记 COMPLETE：修复 SHA `1c1c442…` 尚未出现在 `https://github.com/gushuomaster/skill-engineering.git`，因此 OpenSpace 当前写入的 GitHub URL 在干净外部环境中尚不能解析该 revision。按照本阶段禁止 push/release 的边界，这个外部发布缺口保留为唯一未闭合项。
+修复 SHA `1c1c442…` 已推送到 `https://github.com/gushuomaster/skill-engineering.git` 的 `codex/baseline-wheel-policy-package` 分支。从全新 venv 按 OpenSpace 正式 Git URL 和完整 SHA 构建并安装 wheel 后，PEP 610 provenance、默认 Gate policy、Candidate/Evolution imports、Candidate lifecycle、Local miss 显式 continuation、Candidate visibility、crash reconciliation、restart/runtime reuse 与 Evolution Governance 均通过新鲜验证。当前没有剩余依赖或功能阻塞，正式集成基线可以标记 COMPLETE。
 
-本轮未 merge、push、PR、release、Repository 合并或历史复杂度清理；OpenSpace 原始工作区的 4 个用户修改保持原样。
+本轮仅推送上述必要 skill-engineering 分支；未 merge、PR、release、Repository 合并或历史复杂度清理。OpenSpace 原始工作区的 4 个用户修改保持原样。
 
 ## A. Git Integration Baseline Report
 
@@ -29,7 +29,7 @@ skill-engineering 本地修复候选：`codex/baseline-wheel-policy-package@1c1c
 | Crash reconciliation | 未包含 | 已包含 | `797fe53`/`e2d7af3`/`d9a8281` |
 | Runtime reuse | 未包含 | 已包含 | `3efe735` |
 | Evolution compatibility | 已包含 | 已包含 | E2E 没有删除或旁路 Evolution |
-| Dependency alignment | 已包含旧 pin | 已包含新本地修复 pin | 新 pin 需要发布后才具备远端可复现性 |
+| Dependency alignment | 已包含旧 pin | 已包含已发布修复 pin | 正式 Git URL + exact SHA 可复现 |
 
 E2E 相对 Integration 的提交为：
 
@@ -79,8 +79,8 @@ ab2507b docs: normalize closure report formatting
 | Cloud selection continuation | host/MCP continuation handoff | cloud continuation tests | COMPLETE |
 | Existing Evolution Governance | `GovernanceAdapter` in `runtime/app.py`; Evolution engine before Committer | `tests/skill_engine/test_governance_adapter.py`, `tests/skill_engine/evolution/*`, retry regression | COMPLETE |
 | Ordinary local Skill compatibility | existing Registry/SkillStore/SkillTool paths | full OpenSpace suite | COMPLETE |
-| Default Gate policy in installed wheel | `engine.quality_gate.POLICY_PATH` plus package data | new wheel build/install test; dependency smoke | COMPLETE locally |
-| Immutable GitHub dependency reproducibility | OpenSpace declarations use one SHA and PEP 610 is checked | local exact-SHA passes; `git ls-remote` reports SHA absent | PARTIAL |
+| Default Gate policy in installed wheel | `engine.quality_gate.POLICY_PATH` plus package data | formal Git wheel build/install test; dependency smoke | COMPLETE |
+| Immutable GitHub dependency reproducibility | OpenSpace declarations use one SHA and PEP 610 is checked | fresh venv 从正式 Git URL 构建/安装；commit、policy 与 imports 均验证 | COMPLETE |
 | Task-level automatic replay | explicitly outside approved scope | no test claimed | MISSING by design |
 
 本轮新鲜验证结果：
@@ -89,7 +89,8 @@ ab2507b docs: normalize closure report formatting
 - OpenSpace focused Candidate/Evolution/dependency suite：`131 passed, 1 skipped`。
 - skill-engineering full suite：`460 passed, 2 skipped, 0 failed, 0 collection errors`。
 - 3 个 Skill validators（`skill-discovery`、`delegate-task`、`skill-engineer`）：全部 `Skill is valid!`。
-- 本地 exact-SHA non-editable dependency smoke：PEP 610=`1c1c442…`，`policy=v1`，Candidate/Evolution imports PASS。
+- 正式 GitHub exact-SHA non-editable dependency smoke：PEP 610 URL=`https://github.com/gushuomaster/skill-engineering.git`、commit=`1c1c442…`、`policy=v1`，Candidate/Evolution imports PASS。
+- 全新正式依赖环境 focused Candidate/Evolution suite：`131 passed, 1 skipped`；OpenSpace full suite：`192 passed, 2 skipped`。
 - 2 个 skip 都是 Windows symlink privilege limitation，不是功能失败。
 
 ## C. Historical Complexity Matrix
@@ -99,7 +100,7 @@ ab2507b docs: normalize closure report formatting
 | `GovernanceAdapter` | Evolution engine 在 Committer 前调用 | KEEP / NARROW | 明确文档为 Evolution-only cross-repo adapter；不接管 Candidate governance | 删除会绕过 Evolution Governance |
 | `GovernanceRequest/Result` 与 public facade | OpenSpace Evolution 真实跨 repo 消费 | KEEP | 保留最小请求/结果契约和 Codex semantic boundary | 破坏 Evolution adapter contract |
 | Candidate internal engine imports | Candidate governance 真实消费 inventory/receipt/serialization | KEEP / future NARROW | 当前不删；未来可在有 consumer contract 后缩小 public surface | 当前删除会破坏 Candidate lifecycle |
-| immutable Git SHA pin | 双 repo 安装、receipt provenance、PEP 610 | KEEP | 保持单一 pin；发布前不得把本地 SHA 宣称为远端可复现 | pin 漂移会破坏闭环证据 |
+| immutable Git SHA pin | 双 repo 安装、receipt provenance、PEP 610 | KEEP | 保持单一已发布 pin；每次升级都从全新环境验证正式 URL | pin 漂移会破坏闭环证据 |
 | PEP 610 provenance | dependency contract test | NARROW | 保留为 cross-repo contract 证据，不把它扩展成产品运行时能力 | 过度扩大只增加安装测试维护 |
 | Candidate identity/digest/receipt/integrity | Candidate install/recovery | KEEP | 作为 fail-closed 核心机制 | 删除会允许错 Candidate 安装 |
 | B2 crash/restart | Candidate install kill-point 与 recovery | KEEP | 继续作为重点回归 | 删除会重新引入持久化断点 |
@@ -131,7 +132,7 @@ ab2507b docs: normalize closure report formatting
 - 不删除 GovernanceAdapter、Candidate lifecycle、Evolution Governance 或 recovery/integrity primitives。
 - 不建立第二套 Governance Pipeline、journal、公共治理平台或 Agent 自治 replay。
 - 不把手工复制 policy、editable install 或 PYTHONPATH 当成修复。
-- 不在未发布 `1c1c442…` 前宣称远端 dependency contract COMPLETE。
+- 不用本地 Git URL、editable install、手工 policy copy 或缓存命中替代正式 URL 复现。
 
 ## E. Repository Topology Comparison
 
@@ -151,22 +152,22 @@ ab2507b docs: normalize closure report formatting
 
 ```text
 INTEGRATION_BASELINE_IDENTIFIED = YES
-INTEGRATION_BASELINE_COMPLETE = NO
+INTEGRATION_BASELINE_COMPLETE = YES
 CANDIDATE_LIFECYCLE_PRESENT = YES
 E2E_CONTINUATION_PRESENT = YES
 RUNTIME_REUSE_PRESENT = YES
 EVOLUTION_GOVERNANCE_PRESENT = YES
-DEPENDENCY_CONTRACT_REPRODUCIBLE = NO
+DEPENDENCY_CONTRACT_REPRODUCIBLE = YES
 GOVERNANCE_INVARIANTS_VERIFIED = YES
 SIMPLIFICATION_PLAN_READY = YES
 HIGH_IMPACT_DECISIONS_PENDING = 3
 USER_CHANGES_PRESERVED = YES
 ```
 
-`DEPENDENCY_CONTRACT_REPRODUCIBLE=NO` 的唯一原因是修复提交尚未发布到正式 GitHub remote；本地 exact-SHA wheel 安装与全部功能验证已经通过。3 个待决策项是：
+`DEPENDENCY_CONTRACT_REPRODUCIBLE=YES` 基于全新环境、正式 Git URL、完整 SHA、禁用 wheel 构建缓存的实测；`INTEGRATION_BASELINE_COMPLETE=YES` 同时要求的 Candidate/Evolution focused regression 与 OpenSpace full suite 也已通过。仍有 3 个长期架构决策，但它们不阻塞当前集成基线：
 
 1. skill-engineering 是否长期保持独立 repository；
 2. 独立 package/release 是否继续作为长期交付边界；
 3. 面向未知外部消费者的 public API 与 Production Readiness harness 保留范围。
 
-停止条件已满足：完成统一基线核对、证实的最小 packaging 修复、真实功能与负向验证、架构复杂度复核和简化计划；未进入 merge、push、PR、release 或历史代码清理。
+停止条件已满足：完成统一基线核对、证实的最小 packaging 修复、正式依赖发布与复现、真实功能与负向验证、架构复杂度复核和简化计划；未进入 merge、PR、release 或历史代码清理。
