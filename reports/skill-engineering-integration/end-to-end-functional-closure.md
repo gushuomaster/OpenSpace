@@ -1,8 +1,10 @@
 # End-to-End Skill Workflow Functional Closure
 
-**Date:** 2026-10-08  
-**Branch:** `codex/e2e-skill-functional-closure`  
-**Scope:** OpenSpace managed Candidate visibility, explicit Cloud continuation, interrupted-install recovery, and install-to-runtime reuse.  
+**Date:** 2026-10-08
+
+**Branch:** `codex/e2e-skill-functional-closure`
+
+**Scope:** OpenSpace managed Candidate visibility, explicit Cloud continuation, interrupted-install recovery, and install-to-runtime reuse.
 **Result:** Functional closure and explicit continuation protocol are verified. Task-level automatic replay is not implemented or claimed.
 
 ## Outcome
