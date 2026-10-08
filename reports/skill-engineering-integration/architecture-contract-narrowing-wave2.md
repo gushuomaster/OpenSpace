@@ -2,7 +2,7 @@
 
 日期：2026-10-08
 
-本报告记录 Wave 2 的本地实现、跨仓库集成和受控环境验证。远端发布、PR、merge 和 release 均未执行。
+本报告记录 Wave 2 的实现、dependency publication checkpoint 与 Phase 3 最终集成验证。仅 skill-engineering 授权提交被推送；OpenSpace push、PR、merge 和 release 均未执行。
 
 ## Architecture Changes
 
@@ -29,9 +29,14 @@ OpenSpace 的 `pyproject.toml` 与 `requirements.txt` 均指向：
 
 `skill-engineering @ git+https://github.com/gushuomaster/skill-engineering.git@c0d455054f8525d0a881d4e689e36ecfe287bde4`
 
-本地新 venv 使用本地 Git exact-SHA 构建并安装 skill-engineering，再构建并安装 OpenSpace wheel；在中立工作目录、`python -I`、无 `PYTHONPATH` 条件下完成 import、14-symbol contract、PEP 610 commit provenance 和 `pip check` 验证。OpenSpace wheel：`openspace-2.0.0-py3-none-any.whl`，sha256 `f5f1bcd04d31eb969dae9c5d6c1f3355d266f57ba7cee67b7919bb80a26840fe`。
+全新 Python 3.14.3 venv 从正式 GitHub URL 和精确 SHA、禁用 pip cache 构建并安装 skill-engineering，再构建并安装 OpenSpace wheel；在中立工作目录、`python -I`、无 `PYTHONPATH` 条件下完成 import、14-symbol contract、PEP 610 provenance 和 `pip check` 验证。
 
-远端 `origin` 当前可见 `master=70698fd46496e0fc946e1e49b11b321de4efe34c`，未见新 SHA；因此本地集成可复现，但正式 GitHub URL 的新 revision 复现必须在发布后重新验证。
+远端 `origin/codex/architecture-contract-narrowing-wave2` 已重新读取并 fetch 为 `c0d455054f8525d0a881d4e689e36ecfe287bde4`。发布 diff 仅含 `engine/candidate_contract.py`、`tests/unit/test_candidate_contract.py`、`tests/integration/test_distribution_packaging.py`。
+
+Phase 3 wheels：
+
+- `skill_engineering-1.0.3-py3-none-any.whl`：sha256 `2114b70fc31f2588483fc76f5fb763d21048d27cd3f9c4957c4360dbecffa433`
+- `openspace-2.0.0-py3-none-any.whl`：sha256 `dc88ca2fd6014ab206ea4cbb96d0a24a908c98ae61533720a06d872dc9be8945`
 
 ## Test Evidence
 
@@ -40,19 +45,21 @@ OpenSpace 的 `pyproject.toml` 与 `requirements.txt` 均指向：
 | OpenSpace full suite, isolated venv | `198 passed, 2 skipped` |
 | skill-engineering full suite, isolated venv | `462 passed, 2 skipped` |
 | Candidate focused (`tests/cloud`) | `84 passed, 1 skipped` |
-| Continuation → restart/runtime reuse focused | `4 passed` |
-| Evolution/staged authoring focused | `50 passed` |
+| Cross-repository dependency contract | `5 passed` |
+| Evolution/staged authoring/continuation focused | `52 passed` |
 | OpenSpace wheel neutral import and PEP 610 smoke | PASS |
 | `pip check` | `No broken requirements found` |
 | `skill-discovery` validator | `Skill is valid!` |
 | `delegate-task` validator | `Skill is valid!` |
 | `skill-engineer` validator | `Skill is valid!` |
 
-两个 skip 都是 Windows symlink privilege limitation（WinError 1314），不是功能失败或 collection error。
+OpenSpace full 的 2 个 skip 分别是可选 Harbor/Terminal-Bench 环境未安装，以及 Windows directory symlink privilege limitation（WinError 1314）；Candidate focused 的 1 个 skip 与后者重叠。skill-engineering full 的 2 个 skip 都是 Windows symlink privilege limitation。没有失败、xfail 或 collection error。
 
 ## Remaining Decisions
 
 本轮没有删除 direct-mutation 子图，没有改变公共 Governance API，也没有改变双仓库 topology。现有消费者证据仍支持：保留 Evolution 公共 facade、保留双仓库和 immutable pin；direct-mutation 仅在后续弃用证据和独立消费者审计完成后再评估删除。任何 topology、公共 API 删除或长期治理所有权变化仍需用户单独决策。
+
+残余风险仅包括：当前 Windows 主机无法执行 3 个独立 symlink 测试实例，可选 Harbor/Terminal-Bench gate 未运行；任务级自动重放仍明确不在范围内；3 个长期高影响架构决策仍待用户决定。这些事项不阻塞当前 PR 候选，但需要在对应平台或后续专项继续跟踪。
 
 ## Final Status
 
@@ -65,8 +72,8 @@ CANDIDATE_INTERNAL_IMPORTS_REDUCED = YES
 CANDIDATE_GOVERNANCE_PRESERVED = YES
 EVOLUTION_GOVERNANCE_PRESERVED = YES
 LOCAL_INTEGRATION_VERIFIED = YES
-REMOTE_DEPENDENCY_REPRODUCIBLE = PENDING
-FINAL_INTEGRATION_BASELINE_READY = NO (remote publication pending)
-PR_READY = NO (publication authorization pending)
+REMOTE_DEPENDENCY_REPRODUCIBLE = YES
+FINAL_INTEGRATION_BASELINE_READY = YES
+PR_READY = YES (PR not created; authorization pending)
 USER_CHANGES_PRESERVED = YES
 ```
