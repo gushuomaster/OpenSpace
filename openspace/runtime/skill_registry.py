@@ -90,6 +90,7 @@ def build_skill_registry(
     workspace_dir: str | Path | None = None,
     configured_skill_dirs: Iterable[str | Path] | None = None,
     metadata_only_discovery: bool = False,
+    admission_callback=None,
 ) -> Any | None:
     """Build and populate a SkillRegistry from canonical runtime roots."""
 
@@ -110,5 +111,5 @@ def build_skill_registry(
         skill_override_dir=roots.skill_override_dir,
         metadata_only_discovery=metadata_only_discovery,
     )
-    registry.discover()
+    registry.discover(admission_callback=admission_callback)
     return registry

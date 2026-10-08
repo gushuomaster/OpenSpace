@@ -233,6 +233,25 @@ async def _get_runtime_store(*, required: bool = True):
     store = openspace.get_skill_store()
     if store and not getattr(store, "_closed", False):
         return store
+
+
+def _visibility_policy_for_runtime(openspace: Any):
+    """Build the shared read-only managed-artifact admission policy."""
+
+    from openspace.cloud.candidate_lifecycle import CandidateRepository
+    from openspace.cloud.candidate_visibility import CandidateVisibilityPolicy
+
+    store = None
+    try:
+        store = openspace.get_skill_store()
+    except Exception:
+        pass
+    db_path = getattr(store, "db_path", None)
+    if db_path:
+        root = Path(db_path).expanduser().resolve().parent / "candidates"
+    else:
+        root = Path(os.environ.get("OPENSPACE_CONFIG_HOME", _PROJECT_ROOT / ".openspace")) / "candidates"
+    return CandidateVisibilityPolicy(CandidateRepository(root))
     if required:
         raise RuntimeError("SkillStore is not initialized")
     return None
@@ -391,7 +410,8 @@ async def _auto_register_skill_dirs(skill_dirs: List[str]) -> int:
         logger.warning("_auto_register_skill_dirs: SkillRegistry not initialized")
         return 0
 
-    added = registry.discover_from_dirs(valid_dirs)
+    policy = _visibility_policy_for_runtime(openspace)
+    added = registry.discover_from_dirs(valid_dirs, admission_callback=policy.inspect)
 
     db_created = 0
     if added:
@@ -1767,7 +1787,20 @@ async def fix_skill(
         if not trigger_engine:
             return _json_error("Evolution TriggerEngine is not initialized")
 
-        meta = registry.register_skill_dir(skill_path)
+        policy = _visibility_policy_for_runtime(openspace)
+        decision = policy.inspect(skill_path)
+        if not decision.allowed:
+            return _json_error(
+                "Skill path is not visible until managed Candidate installation completes.",
+                status="error",
+                code="SKILL_VISIBILITY_REJECTED",
+                details={
+                    "admission_code": decision.code,
+                    "candidate_id": getattr(decision, "candidate_id", None),
+                },
+            )
+
+        meta = registry.register_skill_dir(skill_path, admission_callback=policy.inspect)
         if not meta:
             return _json_error(f"Failed to register skill from {skill_dir}")
 

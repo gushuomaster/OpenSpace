@@ -1153,6 +1153,8 @@ class OpenSpaceRuntime:
         """Build and populate the runtime SkillRegistry from configured roots."""
 
         from openspace.runtime.skill_registry import build_skill_registry
+        from openspace.cloud.candidate_lifecycle import CandidateRepository
+        from openspace.cloud.candidate_visibility import CandidateVisibilityPolicy
 
         config = self.config
         skill_cfg = (
@@ -1160,10 +1162,20 @@ class OpenSpaceRuntime:
             if self.state.grounding_config
             else None
         )
+        runtime_db = _runtime_skill_store_db_path(
+            config,
+            self.state.evolution_storage_root,
+        )
+        if runtime_db is None:
+            candidate_root = Path(config.workspace_dir or os.getcwd()).expanduser().resolve() / ".openspace" / "candidates"
+        else:
+            candidate_root = Path(runtime_db).expanduser().resolve().parent / "candidates"
+        policy = CandidateVisibilityPolicy(CandidateRepository(candidate_root))
         return build_skill_registry(
             workspace_dir=config.workspace_dir,
             configured_skill_dirs=getattr(skill_cfg, "skill_dirs", None),
             metadata_only_discovery=config.skill_metadata_only_discovery,
+            admission_callback=policy.inspect,
         )
 
     def session_storage_config_home(self) -> Path | None:
