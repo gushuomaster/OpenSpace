@@ -84,6 +84,19 @@ Results are returned to you (not executed). A cloud acquisition returns a
 quarantined `candidate_path`. Only a successful `install_candidate` result
 returns `installed_path` and makes the Skill eligible for local retrieval.
 
+An empty local result reports `LOCAL_MISS_CONTINUATION_AVAILABLE`. This means
+only that explicit cloud discovery is available as a next action; it does not
+mean the task requires a cloud Skill. Keep these observed milestones separate:
+
+- `LOCAL_MISS_CONTINUATION_AVAILABLE`: a real local search returned zero hits.
+- `CLOUD_DISCOVERY_EXECUTED`: the explicit cloud search actually ran.
+- `CODEX_SELECTION_COMPLETED`: Codex supplied one exact `cloud_skill_id` for acquisition.
+- `CANDIDATE_INSTALLED`: that exact governed Candidate was installed.
+- `TASK_RESUMED_WITH_SKILL`: the existing task/tool chain explicitly continued and invoked the installed Skill.
+
+Do not claim task completion from acquisition or installation alone. A
+continuation is a protocol response, not automatic task replay.
+
 ```
 Found a matching skill?
 ├── YES, Governance passed and installation succeeded

@@ -1225,11 +1225,32 @@ class DiscoverSkillsTool(LocalTool):
                 except Exception:
                     logger.debug("Skill discovery event record failed", exc_info=True)
         if not hits:
-            return ToolResult(
+            resolution = {
+                "status": "local_miss",
+                "milestone": "LOCAL_MISS_CONTINUATION_AVAILABLE",
+                "next_action": "cloud_skill_discovery",
+                "query": query,
+            }
+            result = ToolResult(
                 status=ToolStatus.SUCCESS,
                 content="No relevant skills found for this query.",
-                metadata={"tool": self.name, "skills": []},
+                metadata={
+                    "tool": self.name,
+                    "skills": [],
+                    "skill_resolution": resolution,
+                },
             )
+            attachment = self._discovery_service.build_attachment(
+                [],
+                signal={
+                    "status": "local_miss",
+                    "query": query,
+                    "next_action": "cloud_skill_discovery",
+                    "milestone": "LOCAL_MISS_CONTINUATION_AVAILABLE",
+                },
+            )
+            setattr(result, "additional_messages", [create_attachment_message(attachment)])
+            return result
 
         attachment = self._discovery_service.build_attachment(
             hits,

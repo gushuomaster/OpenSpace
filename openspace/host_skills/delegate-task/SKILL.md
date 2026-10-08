@@ -90,6 +90,12 @@ search_skills(query="docker container monitoring")
 
 Use `search_skills` for local discovery. If you need cloud results, use `cloud_browse_skills` so you can inspect packages and choose the skill explicitly.
 
+When `search_skills` returns `LOCAL_MISS_CONTINUATION_AVAILABLE`, treat it as
+an explicit next-action option, not proof that the task needs a cloud Skill.
+Cloud discovery, Codex selection, Candidate installation, and task resumption
+are separate events. `skills_used: []` from `execute_task` is not a local-miss
+signal and must not trigger or imply cloud escalation.
+
 ### cloud_browse_skills
 
 Use this single stepwise tool for LLM-guided cloud package/skill selection. Continue calling the same tool with the returned `next_actions[].action`.
@@ -184,6 +190,10 @@ cloud_browse_skills(
 Do not substitute a PASS string, a caller-authored verdict, or a receipt alone
 for `governance_outcome`. Use the Skill only after installation returns
 `installed: true` and an `installed_path`.
+
+Installation reports `CANDIDATE_INSTALLED`; it does not automatically retry the
+original task. Report `TASK_RESUMED_WITH_SKILL` only after the existing tool
+chain explicitly continues and invokes the installed Skill.
 
 Choose `local_category_path` as a local package taxonomy path. It uses the same
 classification style as cloud package paths, but is stored independently. It can

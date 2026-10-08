@@ -787,6 +787,10 @@ async def execute_task(
         formatted = _format_task_result(result)
         if cloud_skill_candidates:
             formatted["cloud_skill_candidates"] = cloud_skill_candidates
+            formatted["skill_resolution"] = {
+                "milestone": "CLOUD_DISCOVERY_EXECUTED",
+                "task_resumed_with_skill": False,
+            }
             formatted["cloud_action_required"] = (
                 "Cloud candidates were found but not imported automatically. "
                 "Use cloud_browse_skills(action='local_taxonomy') and then "
@@ -860,7 +864,19 @@ async def search_skills(
             limit=limit,
         )
 
-        return _json_ok({"results": results, "count": len(results), "source": "local"})
+        payload: Dict[str, Any] = {
+            "results": results,
+            "count": len(results),
+            "source": "local",
+        }
+        if not results:
+            payload["skill_resolution"] = {
+                "status": "local_miss",
+                "milestone": "LOCAL_MISS_CONTINUATION_AVAILABLE",
+                "next_action": "cloud_skill_discovery",
+                "query": q,
+            }
+        return _json_ok(payload)
 
     except Exception as e:
         logger.error(f"search_skills failed: {e}", exc_info=True)
@@ -1334,6 +1350,10 @@ async def cloud_recall_packages(
         ]
         return _json_ok({
             "status": "success",
+            "skill_resolution": {
+                "milestone": "CLOUD_DISCOVERY_EXECUTED",
+                "query": q,
+            },
             "query": q,
             "audience": payload.get("audience", audience),
             "search_id": payload.get("search_id", ""),
@@ -1472,6 +1492,10 @@ async def cloud_search_skills(
         return _json_ok({
             "status": "success",
             "endpoint": "/api/v2/skills/search",
+            "skill_resolution": {
+                "milestone": "CLOUD_DISCOVERY_EXECUTED",
+                "query": q,
+            },
             "package_id": pkg,
             "query": q,
             "audience": payload.get("audience", audience),
@@ -1613,6 +1637,11 @@ async def cloud_import_skill(
         return _json_ok({
             **result,
             "status": result.get("status", "success"),
+            "skill_resolution": {
+                "milestone": "CODEX_SELECTION_COMPLETED",
+                "cloud_skill_id": skill_id,
+                "candidate_installed": False,
+            },
             "next_actions": [
                 {
                     "tool": "skill-engineering",
@@ -1697,6 +1726,11 @@ async def cloud_install_candidate(
             "error_message": result.error_message,
         }
         if result.installed:
+            payload["skill_resolution"] = {
+                "milestone": "CANDIDATE_INSTALLED",
+                "candidate_id": result.candidate_id,
+                "task_resumed_with_skill": False,
+            }
             payload["next_actions"] = [
                 {
                     "tool": "search_skills",
