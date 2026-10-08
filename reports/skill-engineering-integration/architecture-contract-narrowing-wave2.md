@@ -39,7 +39,8 @@ OpenSpace 的 `pyproject.toml` 与 `requirements.txt` 均指向：
 |---|---|
 | OpenSpace full suite, isolated venv | `198 passed, 2 skipped` |
 | skill-engineering full suite, isolated venv | `462 passed, 2 skipped` |
-| Candidate contract/runtime/visibility/continuation/recovery | `42 passed, 1 skipped` |
+| Candidate focused (`tests/cloud`) | `84 passed, 1 skipped` |
+| Continuation → restart/runtime reuse focused | `4 passed` |
 | Evolution/staged authoring focused | `50 passed` |
 | OpenSpace wheel neutral import and PEP 610 smoke | PASS |
 | `pip check` | `No broken requirements found` |
