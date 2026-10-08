@@ -619,7 +619,7 @@ class SkillRegistry:
         self._skill_override_dir = Path(skill_override_dir) if skill_override_dir else None
         self._metadata_only_discovery = bool(metadata_only_discovery)
 
-    def discover(self) -> List[SkillMeta]:
+    def discover(self, admission_callback=None) -> List[SkillMeta]:
         """Scan all skill_dirs and populate the registry.
 
         Each skill is a sub-directory containing a ``SKILL.md`` file.
@@ -639,6 +639,29 @@ class SkillRegistry:
 
             for entry in _iter_skill_directories(skill_dir):
                 skill_file = entry / "SKILL.md"
+
+                if admission_callback is not None:
+                    try:
+                        decision = admission_callback(entry)
+                        allowed = getattr(decision, "allowed", decision)
+                        if not allowed:
+                            self._record_diagnostic(
+                                path=skill_file,
+                                severity="warn",
+                                kind="visibility_rejected",
+                                message=f"Rejected managed skill '{entry.name}'",
+                                details=str(getattr(decision, "code", "ADMISSION_REJECTED")),
+                            )
+                            continue
+                    except Exception as exc:
+                        self._record_diagnostic(
+                            path=skill_file,
+                            severity="fail",
+                            kind="visibility_rejected",
+                            message=f"Failed to admit skill '{entry.name}'",
+                            details=str(exc),
+                        )
+                        continue
 
                 try:
                     content = (
@@ -732,6 +755,19 @@ class SkillRegistry:
         self._ensure_discovered()
         return self._skills.get(skill_id)
 
+    def unregister_skill(self, skill_id: str, *, expected_path: Path) -> bool:
+        """Remove one registered Skill only when its directory still matches."""
+
+        self._ensure_discovered()
+        current = self._skills.get(skill_id)
+        if current is None:
+            return False
+        if current.path.parent.resolve() != Path(expected_path).expanduser().resolve():
+            return False
+        self._skills.pop(skill_id, None)
+        self._content_cache.pop(skill_id, None)
+        return True
+
     def get_skill_by_name(self, name: str) -> Optional[SkillMeta]:
         """Get a skill by ``name`` (first match).  Use ``get_skill`` when possible."""
         self._ensure_discovered()
@@ -822,7 +858,7 @@ class SkillRegistry:
         return meta
 
     # Hot-reload API (add external skills at runtime)
-    def discover_from_dirs(self, extra_dirs: List[Path]) -> List[SkillMeta]:
+    def discover_from_dirs(self, extra_dirs: List[Path], admission_callback=None) -> List[SkillMeta]:
         """Discover skills from additional directories and add to the registry.
 
         Unlike :meth:`discover`, this does **NOT** clear existing skills — it
@@ -842,6 +878,28 @@ class SkillRegistry:
                 continue
             for entry in _iter_skill_directories(skill_dir):
                 skill_file = entry / "SKILL.md"
+                if admission_callback is not None:
+                    try:
+                        decision = admission_callback(entry)
+                        allowed = getattr(decision, "allowed", decision)
+                        if not allowed:
+                            self._record_diagnostic(
+                                path=skill_file,
+                                severity="warn",
+                                kind="visibility_rejected",
+                                message=f"Rejected managed skill '{entry.name}'",
+                                details=str(getattr(decision, "code", "ADMISSION_REJECTED")),
+                            )
+                            continue
+                    except Exception as exc:
+                        self._record_diagnostic(
+                            path=skill_file,
+                            severity="fail",
+                            kind="visibility_rejected",
+                            message=f"Failed to admit skill '{entry.name}'",
+                            details=str(exc),
+                        )
+                        continue
                 try:
                     content = skill_file.read_text(encoding="utf-8")
                     format_issues = self._collect_skill_format_issues(content)
@@ -902,7 +960,7 @@ class SkillRegistry:
             )
         return added
 
-    def register_skill_dir(self, skill_dir: Path) -> Optional[SkillMeta]:
+    def register_skill_dir(self, skill_dir: Path, admission_callback=None) -> Optional[SkillMeta]:
         """Register a single skill directory (hot-reload).
 
         Safety: applies ``check_skill_safety`` / ``is_skill_safe`` filtering.
@@ -918,6 +976,27 @@ class SkillRegistry:
         if not skill_file.exists():
             logger.debug(f"register_skill_dir: no SKILL.md in {skill_dir}")
             return None
+        if admission_callback is not None:
+            try:
+                decision = admission_callback(skill_dir)
+                if not getattr(decision, "allowed", decision):
+                    self._record_diagnostic(
+                        path=skill_file,
+                        severity="warn",
+                        kind="visibility_rejected",
+                        message=f"Rejected managed skill '{skill_dir.name}'",
+                        details=str(getattr(decision, "code", "ADMISSION_REJECTED")),
+                    )
+                    return None
+            except Exception as exc:
+                self._record_diagnostic(
+                    path=skill_file,
+                    severity="fail",
+                    kind="visibility_rejected",
+                    message=f"Failed to admit skill '{skill_dir.name}'",
+                    details=str(exc),
+                )
+                return None
         try:
             content = skill_file.read_text(encoding="utf-8")
             format_issues = self._collect_skill_format_issues(content)

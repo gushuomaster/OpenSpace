@@ -6,10 +6,28 @@ import type {
   EvolutionCandidate,
   EvolutionJob,
   EvolutionReviewItem,
+  GovernanceResult,
   QualitySignalAuditRow,
 } from './types';
 
 export const evolutionApi = {
+  async listGovernance(params?: { gateStatus?: string; limit?: number }): Promise<GovernanceResult[]> {
+    const response = await apiClient.get<{ items: GovernanceResult[] }>('/evolution/governance', {
+      params: {
+        gate_status: params?.gateStatus ?? '',
+        limit: params?.limit ?? 100,
+      },
+    });
+    return response.data.items;
+  },
+
+  async getGovernance(governanceId: string): Promise<GovernanceResult> {
+    const response = await apiClient.get<GovernanceResult>(
+      `/evolution/governance/${encodeURIComponent(governanceId)}`,
+    );
+    return response.data;
+  },
+
   async listJobs(params?: { status?: string; limit?: number }): Promise<EvolutionJob[]> {
     const response = await apiClient.get<{ items: EvolutionJob[] }>('/evolution/jobs', {
       params: {

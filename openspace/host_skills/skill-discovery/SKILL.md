@@ -54,6 +54,21 @@ cloud_browse_skills(action="local_placement", local_category_path="technology/co
 cloud_browse_skills(action="import_skill", cloud_skill_id="<cloud_skill_id>", local_category_path="technology/computing/deployment/rollback")
 ```
 
+`import_skill` stops at Acquisition → Quarantine and returns `candidate_id`,
+`candidate_path`, and `candidate_digest`; it does not make the Skill locally
+available. Run the existing skill-engineering `inspect → validate → confirm`
+workflow externally against that exact `candidate_path`. The confirmation must
+be a real Codex semantic confirmation. Then pass the complete serialized
+Governance outcome—not a PASS flag or receipt alone—to the explicit continuation:
+
+```
+cloud_browse_skills(
+  action="install_candidate",
+  candidate_id="<candidate_id>",
+  governance_outcome=<complete_serialized_governance_outcome>
+)
+```
+
 Use `recall` and `pull_projection` only when you need package discovery or
 package outlines before choosing a skill. Concrete skill search should start
 with `search_skills`.
@@ -65,12 +80,29 @@ paths and create a nearby child path before importing.
 
 ## After search
 
-Results are returned to you (not executed). Cloud imports return a `local_path` after `cloud_browse_skills(action="import_skill", ...)`.
+Results are returned to you (not executed). A cloud acquisition returns a
+quarantined `candidate_path`. Only a successful `install_candidate` result
+returns `installed_path` and makes the Skill eligible for local retrieval.
+
+An empty local result reports `LOCAL_MISS_CONTINUATION_AVAILABLE`. This means
+only that explicit cloud discovery is available as a next action; it does not
+mean the task requires a cloud Skill. Keep these observed milestones separate:
+
+- `LOCAL_MISS_CONTINUATION_AVAILABLE`: a real local search returned zero hits.
+- `CLOUD_DISCOVERY_EXECUTED`: the explicit cloud search actually ran.
+- `CODEX_SELECTION_COMPLETED`: Codex supplied one exact `cloud_skill_id` for acquisition.
+- `CANDIDATE_INSTALLED`: that exact governed Candidate was installed.
+- `TASK_RESUMED_WITH_SKILL`: the existing task/tool chain explicitly continued and invoked the installed Skill.
+
+Do not claim task completion from acquisition or installation alone. A
+continuation is a protocol response, not automatic task replay.
 
 ```
 Found a matching skill?
-├── YES, and I can follow it myself
-│     → read SKILL.md at local_path, follow the instructions
+├── YES, Governance passed and installation succeeded
+│     → read SKILL.md at installed_path, follow the instructions
+├── YES, but it is only quarantined
+│     → complete external Governance; do not use it as an installed Skill
 ├── YES, but I lack the capability
 │     → delegate via execute_task (see delegate-task skill)
 └── NO match

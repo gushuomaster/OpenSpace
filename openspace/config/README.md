@@ -79,6 +79,7 @@ Provision cloud credentials with `openspace-cloud-auth bootstrap-agent-key --ema
 | `OPENSPACE_EVOLUTION_TRIGGERS_ENABLED` | Enable durable TriggerJob creation from evidence checkpoints; set `false` to keep evidence ingest but pause trigger jobs | `true` |
 | `OPENSPACE_EVOLUTION_ENGINE_ENABLED` | Enable TriggerJob processing through decision, admission, staged authoring, validation, and commit | `true` |
 | `OPENSPACE_EVOLUTION_MODE` | Evolution mode: `audit_only` audits only, `fix_only` commits explicit direct FIX only, `autonomous` allows all validated admitted actions | `autonomous` |
+| `OPENSPACE_GOVERNANCE_MODE` | Governance gate mode: `off` disables governance, `shadow` records results without blocking, `enforced` fails closed before Committer | `shadow` |
 | `OPENSPACE_EVOLUTION_ALLOW_SINGLE_OBSERVATION_CAPTURE` | Allow a validated CAPTURED proposal, and DERIVED proposal with clear divergence, to persist as a provisional skill from its origin observation. When disabled, automatic proposals remain audit-only candidates; recurrence never promotes them | `true` |
 | `OPENSPACE_EVOLUTION_CAPTURE_SEMANTIC_VALIDATION_ENABLED` | Run one independent semantic review per staged CAPTURED proposal; approval requires exact validation-ref binding, no unsupported executable claims, reusable scope, and no incomplete high-impact safeguard | `true` |
 | `OPENSPACE_EVOLUTION_CAPTURE_SEMANTIC_VALIDATION_MAX_TOKENS` | Maximum output tokens for the independent CAPTURED semantic review | `2048` |

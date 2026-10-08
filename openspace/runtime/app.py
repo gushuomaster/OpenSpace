@@ -641,6 +641,21 @@ class OpenSpaceRuntime:
                         exc,
                     )
 
+            governance_adapter = None
+            if self.state.evidence_store is not None:
+                from openspace.skill_engine.governance_adapter import GovernanceAdapter
+
+                governance_adapter = GovernanceAdapter(
+                    evidence_store=self.state.evidence_store,
+                    mode=getattr(config, "governance_mode", "shadow"),
+                )
+                logger.info(
+                    "✓ Governance adapter enabled (mode=%s, engine=%s@%s)",
+                    governance_adapter.mode.value,
+                    governance_adapter.engine.engine_name,
+                    governance_adapter.engine.engine_version,
+                )
+
             if getattr(config, "evolution_engine_enabled", False):
                 self.state.evolution_engine = EvolutionEngine(
                     packet_builder=self.state.packet_builder,
@@ -689,6 +704,7 @@ class OpenSpaceRuntime:
                         "evolution_behavior_eval_max_revisions",
                         2,
                     ),
+                    governance_adapter=governance_adapter,
                     evolution_mode=getattr(config, "evolution_mode", "autonomous"),
                 )
                 logger.info(
@@ -873,6 +889,27 @@ class OpenSpaceRuntime:
                         await skill_store.sync_from_registry(
                             self.state.skill_registry.list_skills()
                         )
+                        # Reconcile interrupted cloud Candidate installs after the
+                        # Registry/Store are ready, before runtime publication.
+                        from openspace.cloud.candidate_recovery import (
+                            reconcile_installing_candidates,
+                        )
+                        from openspace.cloud.local_mapping import CloudLocalMappingStore
+                        from openspace.cloud.candidate_lifecycle import CandidateRepository
+
+                        runtime_state_root = Path(skill_store.db_path).expanduser().resolve().parent
+                        mapping_store = CloudLocalMappingStore(runtime_state_root / "openspace.db")
+                        try:
+                            recovery_results = await reconcile_installing_candidates(
+                                repository=CandidateRepository(runtime_state_root / "candidates"),
+                                registry=self.state.skill_registry,
+                                skill_store=skill_store,
+                                mapping_store=mapping_store,
+                            )
+                            if recovery_results:
+                                logger.info("✓ Candidate startup reconciliation: %s", recovery_results)
+                        finally:
+                            mapping_store.close()
                         self.register_skill_evidence_read_roots()
 
                     self.state.grounding_agent._skill_store = skill_store
@@ -946,6 +983,7 @@ class OpenSpaceRuntime:
                                 skill_store=skill_store,
                                 registry=self.state.skill_registry,
                                 trigger_engine=self.state.trigger_engine,
+                                governance_adapter=governance_adapter,
                                 backup_root=(
                                     evolution_storage_root
                                     / ".openspace"
@@ -1136,6 +1174,8 @@ class OpenSpaceRuntime:
         """Build and populate the runtime SkillRegistry from configured roots."""
 
         from openspace.runtime.skill_registry import build_skill_registry
+        from openspace.cloud.candidate_lifecycle import CandidateRepository
+        from openspace.cloud.candidate_visibility import CandidateVisibilityPolicy
 
         config = self.config
         skill_cfg = (
@@ -1143,10 +1183,20 @@ class OpenSpaceRuntime:
             if self.state.grounding_config
             else None
         )
+        runtime_db = _runtime_skill_store_db_path(
+            config,
+            self.state.evolution_storage_root,
+        )
+        if runtime_db is None:
+            candidate_root = Path(config.workspace_dir or os.getcwd()).expanduser().resolve() / ".openspace" / "candidates"
+        else:
+            candidate_root = Path(runtime_db).expanduser().resolve().parent / "candidates"
+        policy = CandidateVisibilityPolicy(CandidateRepository(candidate_root))
         return build_skill_registry(
             workspace_dir=config.workspace_dir,
             configured_skill_dirs=getattr(skill_cfg, "skill_dirs", None),
             metadata_only_discovery=config.skill_metadata_only_discovery,
+            admission_callback=policy.inspect,
         )
 
     def session_storage_config_home(self) -> Path | None:

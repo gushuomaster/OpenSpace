@@ -90,6 +90,12 @@ search_skills(query="docker container monitoring")
 
 Use `search_skills` for local discovery. If you need cloud results, use `cloud_browse_skills` so you can inspect packages and choose the skill explicitly.
 
+When `search_skills` returns `LOCAL_MISS_CONTINUATION_AVAILABLE`, treat it as
+an explicit next-action option, not proof that the task needs a cloud Skill.
+Cloud discovery, Codex selection, Candidate installation, and task resumption
+are separate events. `skills_used: []` from `execute_task` is not a local-miss
+signal and must not trigger or imply cloud escalation.
+
 ### cloud_browse_skills
 
 Use this single stepwise tool for LLM-guided cloud package/skill selection. Continue calling the same tool with the returned `next_actions[].action`.
@@ -157,7 +163,7 @@ Inspect `existing_path_candidates`, `new_child_path_examples`, and
 new child path. For DERIVED/CAPTURED suggestions, put the selected path in
 `local_category_path`.
 
-Import the exact chosen cloud skill with the selected local path:
+Acquire the exact chosen cloud Skill Candidate with the selected local path:
 
 ```
 cloud_browse_skills(
@@ -167,17 +173,41 @@ cloud_browse_skills(
 )
 ```
 
+This call stops at Acquisition → Quarantine. Use the returned `candidate_path`
+as the exact artifact for the existing skill-engineering
+`inspect → validate → confirm` workflow. Keep the real Codex semantic
+confirmation and complete managed completion receipt in the serialized outcome.
+Only then request installation:
+
+```
+cloud_browse_skills(
+  action="install_candidate",
+  candidate_id="<candidate_id>",
+  governance_outcome=<complete_serialized_governance_outcome>
+)
+```
+
+Do not substitute a PASS string, a caller-authored verdict, or a receipt alone
+for `governance_outcome`. Use the Skill only after installation returns
+`installed: true` and an `installed_path`.
+
+Installation reports `CANDIDATE_INSTALLED`; it does not automatically retry the
+original task. Report `TASK_RESUMED_WITH_SKILL` only after the existing tool
+chain explicitly continues and invokes the installed Skill.
+
 Choose `local_category_path` as a local package taxonomy path. It uses the same
 classification style as cloud package paths, but is stored independently. It can
 start from a cloud-like path and diverge with finer local child paths.
 
-If the package outline or bundled artifacts are needed, import the package bundle explicitly:
+If the package outline or bundled artifacts are needed, download the inspection-only package bundle explicitly:
 
 ```
 cloud_browse_skills(action="import_package_bundle", package_id="<package_id>")
 ```
 
-Do not use package bundle import as the default search step. Use it only after a package has been selected and you need package outline files or bundled artifacts.
+Do not use package bundle import as the default search step. Package bundles are
+inspection artifacts: they do not create Skill identity, Cloud bindings,
+Registry entries, or SkillStore records.
 
 ### fix_skill
 

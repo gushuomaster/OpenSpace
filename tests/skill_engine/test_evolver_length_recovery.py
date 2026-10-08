@@ -1,7 +1,10 @@
 import asyncio
 import copy
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+
+import pytest
 
 from openspace.application import OpenSpaceConfig
 from openspace.llm.client import LLMClient
@@ -15,6 +18,7 @@ from openspace.skill_engine.evolver import (
     EvolutionTrigger,
     SkillEvolver,
 )
+from openspace.skill_engine.patch import SkillEditResult, stage_create_skill
 from openspace.skill_engine.types import EvolutionSuggestion, EvolutionType
 
 
@@ -227,6 +231,142 @@ def test_refusal_is_recorded_and_not_retried(monkeypatch) -> None:
     assert metadata["stop_reason"] == "refusal"
     assert metadata["has_api_error"] is True
     assert metadata["length_recovery_attempt"] == 0
+
+
+def test_staged_authoring_loop_does_not_require_legacy_mutation_opt_in(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        RecordingManager,
+        "record_conversation_setup",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        RecordingManager,
+        "record_iteration_context",
+        AsyncMock(),
+    )
+    client = FakeLLMClient([_response(_complete_response())])
+
+    result = asyncio.run(
+        _evolver(client).run_staged_authoring_loop(
+            "Author a skill.",
+            _context(),
+        )
+    )
+
+    assert result is not None
+    assert result.change_summary == "Captured the workflow"
+
+
+def test_staged_authoring_retry_preserves_underlying_exception() -> None:
+    class RetryFailure(RuntimeError):
+        pass
+
+    evolver = _evolver(FakeLLMClient([]))
+
+    async def fail_retry(**_kwargs):
+        raise RetryFailure("retry failed")
+
+    evolver._apply_with_retry = fail_retry
+
+    with pytest.raises(RetryFailure, match="retry failed"):
+        asyncio.run(
+            evolver.apply_staged_authoring_with_retry(
+                apply_fn=lambda content: content,
+                initial_content="content",
+                skill_dir=SimpleNamespace(),
+                ctx=_context(),
+                prompt="Author a skill.",
+            )
+        )
+
+
+def test_staged_authoring_retry_applies_corrected_content_only_in_staging(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(RecordingManager, "record_conversation_setup", AsyncMock())
+    monkeypatch.setattr(RecordingManager, "record_iteration_context", AsyncMock())
+    staging_dir = tmp_path / "staging"
+    formal_dir = tmp_path / "formal"
+    formal_dir.mkdir()
+    sentinel = formal_dir / "SKILL.md"
+    sentinel.write_text("formal asset", encoding="utf-8")
+    client = FakeLLMClient([_response(_complete_response())])
+    evolver = _evolver(client)
+    attempts = []
+
+    def apply(content: str) -> SkillEditResult:
+        attempts.append(content)
+        if len(attempts) == 1:
+            return SkillEditResult(error="invalid first staged edit")
+        return stage_create_skill(staging_dir, "retry-skill", content)
+
+    result = asyncio.run(
+        evolver.apply_staged_authoring_with_retry(
+            apply_fn=apply,
+            initial_content="invalid first content",
+            skill_dir=staging_dir / "proposed" / "retry-skill",
+            ctx=_context(),
+            prompt="Author a skill.",
+            cleanup_on_retry=staging_dir,
+        )
+    )
+
+    assert result is not None
+    assert result.ok
+    assert len(attempts) == 2
+    assert sentinel.read_text(encoding="utf-8") == "formal asset"
+    assert (staging_dir / "proposed" / "retry-skill" / "SKILL.md").exists()
+
+
+def test_staged_authoring_retry_exhaustion_cleans_staging_and_preserves_formal(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(RecordingManager, "record_conversation_setup", AsyncMock())
+    monkeypatch.setattr(RecordingManager, "record_iteration_context", AsyncMock())
+    staging_dir = tmp_path / "staging"
+    formal_dir = tmp_path / "formal"
+    formal_dir.mkdir()
+    sentinel = formal_dir / "SKILL.md"
+    sentinel.write_text("formal asset", encoding="utf-8")
+    client = FakeLLMClient(
+        [_response(_complete_response()), _response(_complete_response())]
+    )
+    evolver = _evolver(client)
+    attempts = []
+
+    def always_fail(content: str) -> SkillEditResult:
+        attempts.append(content)
+        failed_dir = staging_dir / "proposed" / "retry-skill"
+        failed_dir.mkdir(parents=True, exist_ok=True)
+        (failed_dir / "partial.txt").write_text("partial", encoding="utf-8")
+        return SkillEditResult(skill_dir=failed_dir, error="persistent staged failure")
+
+    result = asyncio.run(
+        evolver.apply_staged_authoring_with_retry(
+            apply_fn=always_fail,
+            initial_content="invalid first content",
+            skill_dir=staging_dir / "proposed" / "retry-skill",
+            ctx=_context(),
+            prompt="Author a skill.",
+            cleanup_on_retry=staging_dir,
+        )
+    )
+
+    assert result is None
+    assert len(attempts) == 3
+    assert not staging_dir.exists()
+    assert sentinel.read_text(encoding="utf-8") == "formal asset"
+
+
+def test_legacy_direct_mutation_guard_is_closed_by_default() -> None:
+    evolver = _evolver(FakeLLMClient([]))
+
+    with pytest.raises(RuntimeError, match="direct mutation is disabled"):
+        asyncio.run(evolver._execute_contexts([], "test"))
 
 
 def test_skill_evolver_max_tokens_can_be_configured_from_environment(

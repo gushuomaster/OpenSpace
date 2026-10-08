@@ -7,6 +7,7 @@ import {
   type EvolutionCandidate,
   type EvolutionJob,
   type EvolutionReviewItem,
+  type GovernanceResult,
   type QualitySignalAuditRow,
 } from '../api';
 import EmptyState from '../components/EmptyState';
@@ -19,10 +20,10 @@ const JOB_STATUSES = ['all', 'pending', 'running', 'failed_retryable', 'failed',
 const CANDIDATE_STATUSES = ['pending', 'all', 'promoted', 'rejected', 'superseded'];
 
 function statusTone(status: string) {
-  if (['completed', 'committed', 'committed_reconciled', 'promoted'].includes(status)) {
+  if (['completed', 'committed', 'committed_reconciled', 'promoted', 'pass'].includes(status)) {
     return 'text-accent';
   }
-  if (['failed', 'failed_needs_review', 'rejected'].includes(status)) {
+  if (['failed', 'failed_needs_review', 'rejected', 'blocked'].includes(status)) {
     return 'text-danger';
   }
   if (['failed_retryable', 'running', 'committing'].includes(status)) {
@@ -45,6 +46,7 @@ export default function EvolutionPage() {
   const [candidates, setCandidates] = useState<EvolutionCandidate[]>([]);
   const [reviewItems, setReviewItems] = useState<EvolutionReviewItem[]>([]);
   const [qualitySignals, setQualitySignals] = useState<QualitySignalAuditRow[]>([]);
+  const [governanceResults, setGovernanceResults] = useState<GovernanceResult[]>([]);
   const [jobStatus, setJobStatus] = useState('all');
   const [candidateStatus, setCandidateStatus] = useState('pending');
   const [selectedCandidate, setSelectedCandidate] = useState<EvolutionCandidate | null>(null);
@@ -66,14 +68,16 @@ export default function EvolutionPage() {
     setError(null);
     setQualitySignalError(null);
     try {
-      const [nextJobs, nextCandidates, nextReviewItems] = await Promise.all([
+      const [nextJobs, nextCandidates, nextReviewItems, nextGovernance] = await Promise.all([
         evolutionApi.listJobs({ status: jobStatus, limit: 100 }),
         evolutionApi.listCandidates({ status: candidateStatus, limit: 100 }),
         evolutionApi.listReviewItems({ limit: 100 }),
+        evolutionApi.listGovernance({ limit: 20 }),
       ]);
       setJobs(nextJobs);
       setCandidates(nextCandidates);
       setReviewItems(nextReviewItems);
+      setGovernanceResults(nextGovernance);
     } catch (err) {
       setError(err instanceof Error ? err.message : t('evolution.failedToLoad'));
     } finally {
@@ -239,6 +243,41 @@ export default function EvolutionPage() {
         <MetricCard label={t('evolution.failedJobs')} value={summary.failedJobs} hint={t('evolution.jobFilter', { status: jobStatus })} />
         <MetricCard label={t('evolution.pendingReviewItems')} value={summary.pendingReviews} hint={t('evolution.reviewQueueHint')} />
         <MetricCard label={t('evolution.pendingCandidates')} value={summary.pendingCandidates} hint={t('evolution.candidateFilter', { status: candidateStatus })} />
+      </section>
+
+      <section className="panel-surface p-5 space-y-4">
+        <div>
+          <div className="text-xs uppercase tracking-[0.16em] text-muted">Governance</div>
+          <h2 className="text-2xl font-bold font-serif mt-1">Recent Governance Decisions</h2>
+        </div>
+        {governanceResults.length === 0 ? (
+          <EmptyState title="No governance results" description="Governance evidence will appear after an evolution check." />
+        ) : (
+          <div className="grid gap-3 md:grid-cols-2">
+            {governanceResults.map((result) => (
+              <article key={result.governance_id} className="record-card p-4 space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-mono text-xs break-all">{result.governance_id}</span>
+                  <span className={`font-bold ${statusTone(result.gate_status.toLowerCase())}`}>
+                    {result.gate_status}
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-xs text-muted">
+                  <span>Validation: {result.validation_status}</span>
+                  <span>Coverage: {result.coverage_status}</span>
+                  <span>Integrity: {result.integrity_status}</span>
+                </div>
+                <div className="text-xs text-muted break-all">
+                  {result.publish_authorized ? 'Publish authorized' : 'Publish blocked'}
+                  {result.reason_codes.length ? ` · ${result.reason_codes.join(', ')}` : ''}
+                </div>
+                <div className="text-[11px] text-muted">
+                  {result.engine_name}@{result.engine_version} ({result.engine_revision})
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
       </section>
 
       <section className="grid grid-cols-[1.1fr_0.9fr] gap-6">

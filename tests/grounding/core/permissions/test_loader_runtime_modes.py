@@ -50,7 +50,9 @@ def test_bypass_mode_allows_ordinary_path_outside_workspace(
     )
 
     assert result.allowed is True
-    assert result.resolved_path == "/etc/mailman3/mailman.cfg"
+    assert result.resolved_path == str(
+        Path(tmp_path.anchor) / "etc" / "mailman3" / "mailman.cfg"
+    )
 
 
 def test_bypass_mode_allows_bash_read_outside_workspace(

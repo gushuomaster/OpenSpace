@@ -250,6 +250,25 @@ export interface EvolutionAction {
   failures?: Array<Record<string, unknown>>;
 }
 
+export interface GovernanceResult {
+  governance_id: string;
+  validation_status: string;
+  coverage_status: string;
+  integrity_status: string;
+  capabilities: Array<Record<string, unknown>>;
+  provider_results: Array<Record<string, unknown>>;
+  source_digest?: string | null;
+  candidate_digest?: string | null;
+  publish_authorized: boolean;
+  gate_status: string;
+  reason_codes: string[];
+  evidence_refs: string[];
+  engine_name: string;
+  engine_version: string;
+  engine_revision: string;
+  created_at?: string;
+}
+
 export interface EvidenceRef {
   ref_id: string;
   ref_type: string;

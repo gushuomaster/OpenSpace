@@ -9,6 +9,7 @@ anthropic>=0.71.0
 pillow>=12.0.0
 numpy>=1.24.0
 colorama>=0.4.6
+skill-engineering @ git+https://github.com/gushuomaster/skill-engineering.git@c0d455054f8525d0a881d4e689e36ecfe287bde4
 
 # Local server dependencies (cross-platform)
 flask>=3.1.0

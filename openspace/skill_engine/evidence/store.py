@@ -306,6 +306,35 @@ CREATE TABLE IF NOT EXISTS evolution_action_failures (
 
 CREATE INDEX IF NOT EXISTS idx_evolution_action_failures_action
   ON evolution_action_failures(action_id, created_at);
+
+CREATE TABLE IF NOT EXISTS governance_results (
+    governance_id TEXT PRIMARY KEY,
+    request_id TEXT NOT NULL,
+    decision_id TEXT NOT NULL DEFAULT '',
+    admission_id TEXT NOT NULL DEFAULT '',
+    authoring_id TEXT NOT NULL DEFAULT '',
+    validation_id TEXT NOT NULL DEFAULT '',
+    gate_status TEXT NOT NULL,
+    publish_authorized INTEGER NOT NULL DEFAULT 0,
+    validation_status TEXT NOT NULL,
+    coverage_status TEXT NOT NULL,
+    integrity_status TEXT NOT NULL,
+    source_digest TEXT,
+    candidate_digest TEXT,
+    engine_name TEXT NOT NULL,
+    engine_version TEXT NOT NULL,
+    engine_revision TEXT NOT NULL,
+    reason_codes_json TEXT NOT NULL DEFAULT '[]',
+    evidence_refs_json TEXT NOT NULL DEFAULT '[]',
+    result_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_governance_results_request
+  ON governance_results(request_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_governance_results_gate
+  ON governance_results(gate_status, created_at);
 """
 
 
@@ -402,6 +431,152 @@ class EvidenceStore:
         if column in {str(row["name"]) for row in rows}:
             return
         self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+    def persist_governance_result(
+        self,
+        result: Any,
+        *,
+        request_id: str,
+        decision_id: str = "",
+        admission_id: str = "",
+        authoring_id: str = "",
+        validation_id: str = "",
+    ) -> None:
+        """Persist a GovernanceResult in the existing EvidenceStore."""
+
+        payload = result.to_dict() if hasattr(result, "to_dict") else dict(result)
+        governance_id = str(payload.get("governance_id") or "")
+        if not governance_id:
+            raise ValueError("GovernanceResult.governance_id is required")
+        created_at = _utc_now()
+        engine_name = str(payload.get("engine_name") or "skill-engineering")
+        with self._mu:
+            self._ensure_open()
+            self._conn.execute(
+                """
+                INSERT OR REPLACE INTO governance_results (
+                    governance_id, request_id, decision_id, admission_id,
+                    authoring_id, validation_id, gate_status,
+                    publish_authorized, validation_status, coverage_status,
+                    integrity_status, source_digest, candidate_digest,
+                    engine_name, engine_version, engine_revision,
+                    reason_codes_json, evidence_refs_json, result_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    governance_id,
+                    str(request_id or ""),
+                    str(decision_id or ""),
+                    str(admission_id or ""),
+                    str(authoring_id or ""),
+                    str(validation_id or ""),
+                    str(payload.get("gate_status") or "INCOMPLETE"),
+                    1 if payload.get("publish_authorized") else 0,
+                    str(payload.get("validation_status") or "UNKNOWN"),
+                    str(payload.get("coverage_status") or "UNKNOWN"),
+                    str(payload.get("integrity_status") or "UNKNOWN"),
+                    payload.get("source_digest"),
+                    payload.get("candidate_digest"),
+                    engine_name,
+                    str(payload.get("engine_version") or ""),
+                    str(payload.get("engine_revision") or ""),
+                    json.dumps(payload.get("reason_codes") or [], ensure_ascii=False),
+                    json.dumps(payload.get("evidence_refs") or [], ensure_ascii=False),
+                    json.dumps(payload, ensure_ascii=False, sort_keys=True),
+                    created_at,
+                ),
+            )
+            self._conn.commit()
+
+        ref = ResourceRef(
+            ref_id=f"governance:{governance_id}",
+            ref_type="governance_result_ref",
+            producer=engine_name,
+            created_at=created_at,
+            reliability="persisted",
+            role="derived",
+            preview=(
+                f"governance {payload.get('gate_status', 'INCOMPLETE')} "
+                f"publish_authorized={bool(payload.get('publish_authorized'))}"
+            )[:500],
+            metadata={
+                "governance_id": governance_id,
+                "request_id": str(request_id or ""),
+                "decision_id": str(decision_id or ""),
+                "admission_id": str(admission_id or ""),
+                "authoring_id": str(authoring_id or ""),
+                "validation_id": str(validation_id or ""),
+                "gate_status": str(payload.get("gate_status") or "INCOMPLETE"),
+                "reason_codes": payload.get("reason_codes") or [],
+                "engine_version": str(payload.get("engine_version") or ""),
+                "engine_revision": str(payload.get("engine_revision") or ""),
+            },
+            raw_backrefs=[
+                value
+                for value in (
+                    f"decision:{decision_id}" if decision_id else "",
+                    f"admission:{admission_id}" if admission_id else "",
+                    f"authoring:{authoring_id}" if authoring_id else "",
+                    f"validation:{validation_id}" if validation_id else "",
+                    *[str(item) for item in payload.get("evidence_refs") or []],
+                )
+                if value
+            ],
+        )
+        event = EvidenceEvent.create(
+            event_id=f"evt_governance_{_digest(governance_id)}",
+            event_type="governance_result_persisted",
+            producer=engine_name,
+            created_at=created_at,
+            idempotency_key=f"governance_result:{governance_id}",
+            derived_refs=[ref],
+            metadata={
+                "governance_id": governance_id,
+                "request_id": str(request_id or ""),
+                "gate_status": str(payload.get("gate_status") or "INCOMPLETE"),
+            },
+        )
+        self.ingest_event(event)
+
+    def load_governance_result(self, governance_id: str) -> dict[str, Any] | None:
+        with self._reader() as conn:
+            row = conn.execute(
+                "SELECT result_json FROM governance_results WHERE governance_id=?",
+                (str(governance_id or ""),),
+            ).fetchone()
+            if row is None:
+                return None
+            return _json_object(row["result_json"])
+
+    def list_governance_results(
+        self,
+        *,
+        gate_status: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        with self._reader() as conn:
+            params: list[Any] = []
+            where = ""
+            if gate_status:
+                where = "WHERE gate_status=?"
+                params.append(str(gate_status))
+            params.append(max(1, min(int(limit), 500)))
+            rows = conn.execute(
+                f"""
+                SELECT result_json, created_at
+                FROM governance_results
+                {where}
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                tuple(params),
+            ).fetchall()
+            items: list[dict[str, Any]] = []
+            for row in rows:
+                payload = _json_object(row["result_json"])
+                payload["created_at"] = str(row["created_at"])
+                items.append(payload)
+            return items
 
     @contextmanager
     def _reader(self) -> Generator[sqlite3.Connection, None, None]:

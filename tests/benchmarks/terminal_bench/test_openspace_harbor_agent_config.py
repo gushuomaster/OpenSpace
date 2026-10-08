@@ -5,6 +5,18 @@ import shutil
 
 import pytest
 
+
+pytestmark = pytest.mark.terminal_bench
+
+pytest.importorskip(
+    "harbor",
+    reason="Terminal-Bench config tests require the optional Harbor environment",
+)
+pytest.importorskip(
+    "terminal_bench",
+    reason="Terminal-Bench config tests require the optional benchmark environment",
+)
+
 from benchmarks.terminal_bench import openspace_harbor_agent
 from benchmarks.terminal_bench import openspace_agent
 from benchmarks.terminal_bench import run_benchmark
