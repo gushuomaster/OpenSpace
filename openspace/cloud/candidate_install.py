@@ -278,7 +278,8 @@ async def install_candidate(
     try:
         final_path.parent.mkdir(parents=True, exist_ok=True)
         temporary = final_path.with_name(
-            f".{final_path.name}.installing-{uuid.uuid4().hex}"
+            f".{final_path.name}.installing-"
+            f"{manifest.candidate_id}-{uuid.uuid4().hex}"
         )
         shutil.copytree(payload, temporary)
         temporary_digest = digest_tree(temporary)

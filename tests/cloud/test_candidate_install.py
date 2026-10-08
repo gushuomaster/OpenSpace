@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import json
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -42,7 +44,10 @@ from engine.providers import CAPABILITY_CONTRACT, ProviderGateway
 from engine.serialization import completion_receipt_from_data, outcome_to_data
 
 from openspace.cloud.candidate_install import install_candidate
+from openspace.cloud.candidate_governance import verify_confirmed_candidate
 from openspace.cloud.candidate_lifecycle import (
+    CandidateGovernanceBinding,
+    CandidateIntegrityError,
     CandidateRepository,
     CandidateStatus,
     SourceIntegrityStatus,
@@ -411,6 +416,65 @@ def test_pass_candidate_installs_then_becomes_registry_visible(
     assert result.installed_digest == installer_fixture.receipt.candidate_digest
     assert installer_fixture.registry.get_skill(result.skill_id) is not None
     assert installer_fixture.skill_store.load_record(result.skill_id) is not None
+
+
+def test_concurrent_governance_binding_preserves_the_winning_binding(
+    installer_fixture: InstallerFixture,
+    monkeypatch,
+) -> None:
+    import openspace.cloud.candidate_lifecycle as lifecycle
+
+    fixture = installer_fixture
+    governance = verify_confirmed_candidate(fixture.payload_path, fixture.pass_payload)
+    write_barrier = threading.Barrier(2)
+    transition_lock = threading.Lock()
+    first_transition_done = threading.Event()
+    transition_count = 0
+    original_write = lifecycle._atomic_write_json
+    original_transition = fixture.repository.transition
+    binding_path = fixture.repository.governance_binding_path(
+        fixture.manifest.candidate_id
+    )
+
+    def racing_write(path, payload, *args, **kwargs):
+        if path == binding_path:
+            write_barrier.wait(timeout=5)
+        return original_write(path, payload, *args, **kwargs)
+
+    def ordered_transition(candidate_id, **kwargs):
+        nonlocal transition_count
+        with transition_lock:
+            index = transition_count
+            transition_count += 1
+        if index == 0:
+            try:
+                return original_transition(candidate_id, **kwargs)
+            finally:
+                first_transition_done.set()
+        assert first_transition_done.wait(timeout=5)
+        return original_transition(candidate_id, **kwargs)
+
+    monkeypatch.setattr(lifecycle, "_atomic_write_json", racing_write)
+    monkeypatch.setattr(fixture.repository, "transition", ordered_transition)
+
+    def bind():
+        try:
+            return fixture.repository.bind_governance(
+                fixture.manifest.candidate_id,
+                governance,
+            )
+        except Exception as exc:
+            return exc
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(lambda _index: bind(), range(2)))
+
+    assert sum(isinstance(item, CandidateGovernanceBinding) for item in results) == 1
+    assert sum(isinstance(item, CandidateIntegrityError) for item in results) == 1
+    assert binding_path.is_file()
+    assert fixture.repository.load_governance_binding(
+        fixture.manifest.candidate_id
+    ).candidate_id == fixture.manifest.candidate_id
 
 
 @pytest.mark.parametrize(

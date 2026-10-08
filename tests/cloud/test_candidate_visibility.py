@@ -144,6 +144,36 @@ def test_non_installed_formal_path_is_rejected(tmp_path: Path) -> None:
     assert decision.candidate_id == manifest.candidate_id
 
 
+def test_interrupted_install_temporary_path_is_rejected(tmp_path: Path) -> None:
+    repository, manifest = _quarantine(tmp_path)
+    formal_path = _formal_path(manifest)
+    temporary = formal_path.with_name(
+        f".{formal_path.name}.installing-{manifest.candidate_id}-{'a' * 32}"
+    )
+    shutil.copytree(repository.payload_path(manifest), temporary)
+
+    decision = _policy(repository).inspect(temporary)
+
+    assert decision.allowed is False
+    assert decision.code == "CANDIDATE_INSTALL_TEMPORARY"
+
+
+def test_nested_skill_under_interrupted_install_temporary_is_rejected(
+    tmp_path: Path,
+) -> None:
+    repository, manifest = _quarantine(tmp_path)
+    formal_path = _formal_path(manifest)
+    temporary = formal_path.with_name(
+        f".{formal_path.name}.installing-{manifest.candidate_id}-{'a' * 32}"
+    )
+    nested = _write_skill(temporary / "nested" / "skill")
+
+    decision = _policy(repository).inspect(nested)
+
+    assert decision.allowed is False
+    assert decision.code == "CANDIDATE_INSTALL_TEMPORARY"
+
+
 def test_inspection_only_bundle_is_rejected(tmp_path: Path) -> None:
     repository = CandidateRepository(tmp_path / "state" / "candidates")
     skill = _write_skill(tmp_path / "cloud-packages" / "pkg" / "skill")

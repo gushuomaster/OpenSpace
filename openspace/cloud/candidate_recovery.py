@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
@@ -66,6 +67,27 @@ async def _cleanup_owned(
     record = skill_store.load_record(manifest.final_skill_id)
     if record is not None and record.is_active and _resolved_parent(record.path) == final_path:
         await skill_store.delete_record(manifest.final_skill_id)
+
+
+def _cleanup_install_temporaries(
+    final_path: Path,
+    candidate_id: str,
+) -> None:
+    """Remove only the current Candidate's reserved install staging paths."""
+
+    pattern = re.compile(
+        rf"\.{re.escape(final_path.name)}\.installing-"
+        rf"{re.escape(candidate_id)}-[0-9a-f]{{32}}"
+    )
+    if not final_path.parent.is_dir():
+        return
+    for entry in final_path.parent.iterdir():
+        if pattern.fullmatch(entry.name) is None:
+            continue
+        if entry.is_symlink() or not entry.is_dir():
+            entry.unlink(missing_ok=True)
+        else:
+            shutil.rmtree(entry, ignore_errors=True)
 
 
 def _verify_identity(repository: CandidateRepository, candidate_id: str) -> tuple[CandidateManifest, Path]:
@@ -190,6 +212,7 @@ async def _reconcile_one(
         )
         status = CandidateStatus.INTEGRITY_MISMATCH if mismatch.integrity else CandidateStatus.INSTALL_FAILED
         if manifest is not None and final_path is not None:
+            _cleanup_install_temporaries(final_path, manifest.candidate_id)
             await _cleanup_owned(
                 manifest, final_path,
                 registry=registry, skill_store=skill_store, mapping_store=mapping_store,
@@ -261,6 +284,7 @@ async def _reconcile_one(
             manifest, final_path,
             registry=registry, skill_store=skill_store, mapping_store=mapping_store,
         )
+        _cleanup_install_temporaries(final_path, manifest.candidate_id)
         return CandidateRecoveryResult(
             candidate_id, CandidateStatus.INSTALLING, "RECOVERY_INTERRUPTED", str(exc)
         )

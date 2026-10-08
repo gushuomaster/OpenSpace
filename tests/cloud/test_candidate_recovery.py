@@ -148,6 +148,33 @@ def test_missing_formal_path_cleans_owned_metadata_and_fails(installing_fixture)
     assert fixture.mapping_store.get_skill_local_classification(fixture.skill_id) is None
 
 
+def test_missing_formal_path_cleans_only_owned_install_temporary(
+    installing_fixture,
+):
+    fixture = installing_fixture
+    shutil.rmtree(fixture.final_path)
+    owned_temporary = fixture.final_path.with_name(
+        f".{fixture.final_path.name}.installing-"
+        f"{fixture.manifest.candidate_id}-{'a' * 32}"
+    )
+    other_candidate_temporary = fixture.final_path.with_name(
+        f".{fixture.final_path.name}.installing-"
+        f"candidate_{'9' * 64}-{'b' * 32}"
+    )
+    shutil.copytree(fixture.payload_path, owned_temporary)
+    other_candidate_temporary.mkdir()
+    (other_candidate_temporary / "SKILL.md").write_text(
+        "unrelated asset\n", encoding="utf-8"
+    )
+
+    result = _recover(fixture)
+
+    assert result.status is CandidateStatus.INSTALL_FAILED
+    assert result.error_code == "FORMAL_PATH_MISSING"
+    assert not owned_temporary.exists()
+    assert other_candidate_temporary.is_dir()
+
+
 def test_payload_tamper_fails_closed_without_deleting_formal_bytes(installing_fixture):
     fixture = installing_fixture
     (fixture.payload_path / "tampered.txt").write_text("tampered", encoding="utf-8")

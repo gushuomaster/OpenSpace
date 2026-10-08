@@ -212,14 +212,25 @@ def _binding_to_data(binding: CandidateGovernanceBinding) -> dict[str, Any]:
     return asdict(binding)
 
 
-def _atomic_write_json(path: Path, payload: Mapping[str, Any]) -> None:
+def _atomic_write_json(
+    path: Path,
+    payload: Mapping[str, Any],
+    *,
+    exclusive: bool = False,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
     temporary.write_text(
         json.dumps(dict(payload), ensure_ascii=False, sort_keys=True, indent=2) + "\n",
         encoding="utf-8",
     )
-    os.replace(temporary, path)
+    try:
+        if exclusive:
+            os.link(temporary, path)
+        else:
+            os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 class CandidateRepository:
@@ -484,7 +495,16 @@ class CandidateRepository:
             managed_completion_receipt_digest=result.receipt_digest,
             bound_at=bound_at or _utc_now(),
         )
-        _atomic_write_json(path, _binding_to_data(binding))
+        try:
+            _atomic_write_json(
+                path,
+                _binding_to_data(binding),
+                exclusive=True,
+            )
+        except FileExistsError as exc:
+            raise CandidateIntegrityError(
+                "Candidate already has a Governance binding"
+            ) from exc
         try:
             self.transition(
                 candidate_id,
@@ -493,7 +513,11 @@ class CandidateRepository:
                 receipt_digest=result.receipt_digest,
             )
         except Exception:
-            path.unlink(missing_ok=True)
+            try:
+                if self.load_governance_binding(candidate_id) == binding:
+                    path.unlink(missing_ok=True)
+            except (OSError, UnicodeError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+                pass
             raise
         return binding
 

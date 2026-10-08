@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -16,6 +17,11 @@ from openspace.cloud.candidate_lifecycle import (
     CandidateStatus,
     candidate_identity,
     formal_candidate_path,
+)
+
+
+_INSTALL_TEMPORARY_RE = re.compile(
+    r"\..+\.installing-(?:candidate_[0-9a-f]{64}-)?[0-9a-f]{32}"
 )
 
 
@@ -49,6 +55,19 @@ class CandidateVisibilityPolicy:
         marker_decision = self._inspect_package_markers(lexical, resolved)
         if marker_decision is not None:
             return marker_decision
+
+        install_temporary_ancestors = (
+            directory
+            for path in (lexical, resolved)
+            for directory in (path, *path.parents)
+        )
+        if any(
+            _INSTALL_TEMPORARY_RE.fullmatch(directory.name)
+            for directory in install_temporary_ancestors
+        ):
+            return CandidateVisibilityDecision(
+                False, "CANDIDATE_INSTALL_TEMPORARY"
+            )
 
         quarantine = self.repository.quarantine_root.resolve(strict=False)
         if resolved == quarantine or resolved.is_relative_to(quarantine):
