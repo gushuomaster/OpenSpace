@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-EXPECTED_REVISION = "0c83c8e87356191a0ef36c5c0f5a3f262eebbe3c"
+EXPECTED_REVISION = "1c1c44225ba46efc96add761a30c7c9b04aa5270"
 
 
 def _declared_revision(path: Path) -> str | None:
@@ -32,6 +32,13 @@ def test_candidate_governance_import_contract_is_available():
     assert ArtifactRole is not None
     assert callable(validate_completion_receipt)
     assert callable(validation_from_data)
+
+
+def test_installed_distribution_loads_default_gate_policy():
+    from engine.quality_gate import load_gate_policy
+
+    policy = load_gate_policy()
+    assert policy["policy_version"]
 
 
 def test_installed_distribution_matches_declared_revision_when_direct_url():
