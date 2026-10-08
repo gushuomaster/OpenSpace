@@ -16,7 +16,7 @@ from openspace.cloud.candidate_lifecycle import (
     formal_candidate_path,
 )
 from openspace.cloud.candidate_governance import verify_confirmed_candidate
-from openspace.cloud.candidate_visibility import CandidateVisibilityPolicy
+from openspace.cloud.candidate_visibility import CandidateVisibilityDecision, CandidateVisibilityPolicy
 from openspace.cloud.local_mapping import CloudSkillBinding
 from test_candidate_install import InstallerFixture
 
@@ -320,3 +320,51 @@ def test_terminal_write_then_exception_preserves_completed_visibility(installing
     assert fixture.repository.load_state(fixture.manifest.candidate_id).status is CandidateStatus.INSTALLED
     assert CandidateVisibilityPolicy(fixture.repository).inspect(fixture.final_path).allowed
     assert fixture.registry.get_skill(fixture.skill_id) is not None
+
+
+def test_post_write_visibility_denial_aborts_startup_without_cleanup(
+    installing_fixture, monkeypatch
+):
+    fixture = installing_fixture
+    original_inspect = CandidateVisibilityPolicy.inspect
+    original_transition = fixture.repository.transition
+    calls = 0
+
+    def deny_after_terminal_write(policy, path):
+        nonlocal calls
+        calls += 1
+        if calls >= 2:
+            return CandidateVisibilityDecision(False, "INJECTED_ADMISSION_DENIAL")
+        return original_inspect(policy, path)
+
+    def interrupted_transition(candidate_id, **kwargs):
+        state = original_transition(candidate_id, **kwargs)
+        if kwargs.get("next_status") is CandidateStatus.INSTALLED:
+            raise RuntimeError("exception after atomic state write")
+        return state
+
+    monkeypatch.setattr(CandidateVisibilityPolicy, "inspect", deny_after_terminal_write)
+    monkeypatch.setattr(fixture.repository, "transition", interrupted_transition)
+
+    with pytest.raises(RuntimeError, match="INJECTED_ADMISSION_DENIAL"):
+        _recover(fixture)
+
+    assert fixture.repository.load_state(fixture.manifest.candidate_id).status is CandidateStatus.INSTALLED
+    assert fixture.registry.get_skill(fixture.skill_id) is not None
+    assert fixture.skill_store.load_record(fixture.skill_id) is not None
+
+
+def test_inactive_store_record_at_formal_path_is_preserved(installing_fixture):
+    fixture = installing_fixture
+    meta = fixture.registry.register_skill_dir(fixture.final_path)
+    asyncio.run(fixture.skill_store.sync_from_registry([meta]))
+    asyncio.run(fixture.skill_store.deactivate_record(fixture.skill_id))
+    assert fixture.skill_store.load_record(fixture.skill_id).is_active is False
+
+    result = _recover(fixture)
+
+    assert result.status is CandidateStatus.INSTALL_FAILED
+    assert result.error_code == "STORE_INACTIVE_CONFLICT"
+    assert fixture.repository.load_state(fixture.manifest.candidate_id).status is CandidateStatus.INSTALL_FAILED
+    assert fixture.skill_store.load_record(fixture.skill_id).is_active is False
+    assert fixture.final_path.is_dir()

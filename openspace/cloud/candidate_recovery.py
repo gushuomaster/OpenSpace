@@ -64,7 +64,7 @@ async def _cleanup_owned(
         expected_local_path=final_path,
     )
     record = skill_store.load_record(manifest.final_skill_id)
-    if record is not None and _resolved_parent(record.path) == final_path:
+    if record is not None and record.is_active and _resolved_parent(record.path) == final_path:
         await skill_store.delete_record(manifest.final_skill_id)
 
 
@@ -149,6 +149,8 @@ def _verify_visibility_ownership(
             raise _RecoveryMismatch("STORE_PATH_CONFLICT", "another SkillStore record occupies path", integrity=False)
         if record.skill_id == skill_id and record_parent != final_path:
             raise _RecoveryMismatch("STORE_ID_CONFLICT", "SkillStore ID belongs to another path", integrity=False)
+        if record.skill_id == skill_id and not record.is_active:
+            raise _RecoveryMismatch("STORE_INACTIVE_CONFLICT", "SkillStore record is inactive", integrity=False)
     local = mapping_store.get_binding_by_local(skill_id)
     cloud = mapping_store.get_binding_by_cloud(manifest.cloud_skill_id)
     for binding in (local, cloud):
@@ -207,7 +209,7 @@ async def _reconcile_one(
             raise _RecoveryMismatch("REGISTRY_PARSE_MISMATCH", "Registry parsed another Skill identity")
         await skill_store.sync_from_registry([meta])
         record = skill_store.load_record(manifest.final_skill_id)
-        if record is None or _resolved_parent(record.path) != final_path:
+        if record is None or not record.is_active or _resolved_parent(record.path) != final_path:
             raise RuntimeError("SkillStore did not persist the Candidate")
         mapping_store.upsert_binding(
             CloudSkillBinding(
@@ -247,13 +249,14 @@ async def _reconcile_one(
         return CandidateRecoveryResult(candidate_id, CandidateStatus.INSTALLED)
     except Exception as exc:
         try:
-            if (
-                repository.load_state(candidate_id).status is CandidateStatus.INSTALLED
-                and CandidateVisibilityPolicy(repository).inspect(final_path).allowed
-            ):
+            persisted_status = repository.load_state(candidate_id).status
+        except (OSError, UnicodeError, ValueError, KeyError, TypeError, json.JSONDecodeError) as state_exc:
+            raise RuntimeError("Candidate terminal state is unreadable after recovery interruption") from state_exc
+        if persisted_status is CandidateStatus.INSTALLED:
+            decision = CandidateVisibilityPolicy(repository).inspect(final_path)
+            if decision.allowed:
                 return CandidateRecoveryResult(candidate_id, CandidateStatus.INSTALLED)
-        except (OSError, UnicodeError, ValueError, KeyError, TypeError, json.JSONDecodeError):
-            pass
+            raise RuntimeError(f"Candidate visibility rejected after terminal write: {decision.code}") from exc
         await _cleanup_owned(
             manifest, final_path,
             registry=registry, skill_store=skill_store, mapping_store=mapping_store,
