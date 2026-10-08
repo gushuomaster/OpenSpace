@@ -1,4 +1,8 @@
-"""Thin runtime bridge to the independent skill-engineering engine."""
+"""Evolution-only runtime bridge to the independent governance engine.
+
+Candidate Governance is owned by the candidate lifecycle integration and does
+not pass through this adapter.
+"""
 
 from __future__ import annotations
 
@@ -12,7 +16,7 @@ from .persistence_bridge import persist_governance_result
 
 
 class GovernanceAdapter:
-    """Translate lifecycle facts, invoke governance, and persist its result."""
+    """Govern an Evolution lifecycle and persist its governance result."""
 
     def __init__(
         self,

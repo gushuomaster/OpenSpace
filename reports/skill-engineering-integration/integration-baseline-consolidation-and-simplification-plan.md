@@ -2,7 +2,7 @@
 
 日期：2026-10-08
 
-审计基线：`codex/e2e-skill-functional-closure@76262da82c4bd2fca553f323c67913d0e44e96eb`
+审计基线：`codex/e2e-skill-functional-closure@30b30f626e09d4ce64c4c82a0d7da71b9bd5914f`
 skill-engineering 已发布修复 revision：`codex/baseline-wheel-policy-package@1c1c44225ba46efc96add761a30c7c9b04aa5270`
 
 ## 结论先行
@@ -11,7 +11,9 @@ skill-engineering 已发布修复 revision：`codex/baseline-wheel-policy-packag
 
 修复 SHA `1c1c442…` 已推送到 `https://github.com/gushuomaster/skill-engineering.git` 的 `codex/baseline-wheel-policy-package` 分支。从全新 venv 按 OpenSpace 正式 Git URL 和完整 SHA 构建并安装 wheel 后，PEP 610 provenance、默认 Gate policy、Candidate/Evolution imports、Candidate lifecycle、Local miss 显式 continuation、Candidate visibility、crash reconciliation、restart/runtime reuse 与 Evolution Governance 均通过新鲜验证。当前没有剩余依赖或功能阻塞，正式集成基线可以标记 COMPLETE。
 
-本轮仅推送上述必要 skill-engineering 分支；未 merge、PR、release、Repository 合并或历史复杂度清理。OpenSpace 原始工作区的 4 个用户修改保持原样。
+依赖发布阶段仅推送上述必要 skill-engineering 分支。Architecture Simplification Wave 1 随后只归档无真实引用的历史报告、建立单一报告索引、分类 live harness，并把 `GovernanceAdapter` 的文档职责收窄为 Evolution-only；未修改其 API 或运行时行为。
+
+Wave 1 未 merge、push、PR、release、改变 Repository topology、删除 direct-mutation 子图或调整公共 Governance API。OpenSpace 原始工作区的 4 个用户修改保持原样。
 
 ## A. Git Integration Baseline Report
 
@@ -114,12 +116,13 @@ ab2507b docs: normalize closure report formatting
 
 ## D. Minimal Simplification Plan
 
-### P0：无需用户决策、可安全做的收窄
+### P0：Wave 1 已实施的安全收窄
 
-1. 把 Production Readiness、B1、B4、rollback/release closure 从默认“统一 Candidate 完成定义”中移到按需发布/专项验证；保留原始报告和可复现命令。
-2. 将 `GovernanceAdapter` 文档、模块说明和 contract test 明确为 Evolution-only；Candidate 继续使用 skill-engineering 的窄治理入口，不建立第二套 pipeline。
-3. 保留当前最小 dependency contract：两个声明同一 immutable SHA、PEP 610、Candidate/Evolution imports、默认 Gate policy load。不要再增加全局 PYTHONPATH 或手工 config copy accommodation。
-4. 继续保留 B2/B3、Candidate digest/receipt/integrity/recovery 和 visibility admission；这些直接保护安全与 fail-closed 不变量。
+1. 已通过单一报告索引把 Production Readiness、B4 与 release closure 明确为按需专项；11 份无真实引用的阶段报告使用 `git mv` 移入 `archive/`，内容与 Git 历史保留。
+2. 已将 `GovernanceAdapter` 模块和类文档明确为 Evolution-only；Candidate 继续使用 skill-engineering 的窄治理入口，没有建立第二套 pipeline，也没有修改 adapter API、实现或消费者。
+3. 继续保留当前最小 dependency contract：两个声明同一 immutable SHA、PEP 610、Candidate/Evolution imports、默认 Gate policy load。没有增加全局 PYTHONPATH 或手工 config copy accommodation。
+4. `tests/live/README.md` 已把 B2 crash/recovery 与 B3 shadow Evolution 列为 Required guardrails；B4 MCP 和 Production/Operational/Provider harness 列为 On-demand。脚本没有删除、移动或降低断言。
+5. Candidate digest/receipt/integrity/recovery、visibility admission 与 Evolution Governance 均保持原实现和职责。
 
 ### P1：需要后续真实消费者证据后再做
 
@@ -133,6 +136,28 @@ ab2507b docs: normalize closure report formatting
 - 不建立第二套 Governance Pipeline、journal、公共治理平台或 Agent 自治 replay。
 - 不把手工复制 policy、editable install 或 PYTHONPATH 当成修复。
 - 不用本地 Git URL、editable install、手工 policy copy 或缓存命中替代正式 URL 复现。
+
+### Wave 1 后的三项待用户决策
+
+| 决策 | 当前消费者证据 | 兼容性成本 | 建议 |
+|---|---|---|---|
+| 删除 direct-mutation 子图 | Repository 内没有调用方显式传入 `allow_legacy_direct_mutation=True`；正式 runtime 仍实例化并公开导出 `SkillEvolver`。`SkillEvolverAuthoringBackend` 真实复用 `_run_evolution_loop` 与 `_apply_with_retry`，相关 focused tests 也直接构造 `SkillEvolver` | 直接删除旧公开方法或构造参数会影响未知外部消费者；误删共享私有 primitive 会破坏正式 staged authoring。需要先把 authoring backend 的共享 primitive 收口到受支持契约，并建立外部消费者/弃用证据 | 暂不删除。先区分“无消费者的 direct-mutation entrypoints”和“仍被 staged authoring 复用的 primitives”，用弃用周期与 focused regression 驱动后续删除 |
+| 是否继续维护独立公共 Governance API | OpenSpace 的 Evolution `GovernanceAdapter` 与 mapping 直接从 `engine` facade 消费 `GovernanceEngine`、`GovernanceMode`、`GovernanceRequest`、`GovernanceResult`、`ProviderObservation`；B2/B3 与 production/on-demand harness 也消费该 facade。Candidate 路径另行消费 `engine.inventory`、`managed_completion`、`models`、`orchestrator`、`serialization` 等窄模块 | 删除或改名会同时迁移 runtime adapter、mapping、live harness、cross-repo contract tests，并可能破坏未知 package consumers；继续扩大 facade 又会固化不必要耦合 | 在双仓库边界未决前保留现有最小 facade，不扩大公共面。另行设计 Candidate 所需窄 contract 后，才评估内部模块导入收口 |
+| Repository topology | OpenSpace 的 `pyproject.toml` 与 `requirements.txt` 均 pin `skill-engineering` 的正式 Git URL 和完整 SHA；Evolution 消费公共 facade，Candidate 消费治理、receipt、integrity primitives。skill-engineering 仍拥有独立完整测试与 Skill validator | 合仓需迁移 Governance engine、schemas、providers、receipt/integrity、package data、tests 与发布 provenance；继续双仓则持续承担 immutable pin、wheel packaging、跨仓库回归和升级协调成本 | 近期维持双仓并先缩窄跨仓库 contract。只有用户接受迁移与发布耦合成本后，才启动 topology 变更设计 |
+
+三项均为高影响边界，Wave 1 只记录证据和建议，不实施选择。
+
+### Wave 1 验证结果
+
+- 报告入口：[`README.md`](README.md)；Active / Historical / On-demand 分类唯一，当前权威报告指向本文。
+- 历史报告：11 份使用 `git mv` 归档；归档内容零修改，旧位置均不存在。
+- live harness：[`../../tests/live/README.md`](../../tests/live/README.md) 已建立分类；8 个既有 Python 脚本 SHA-256 前后一致。
+- `GovernanceAdapter`：仅 module/class docstring 变化；focused regression `7 passed`。
+- OpenSpace full suite：`192 passed, 2 skipped`。
+- skill-engineering full suite：同一 HEAD `70698fd46496e0fc946e1e49b11b321de4efe34c` 的干净隔离 worktree 中 `481 passed, 2 skipped`。主 checkout 的首次运行因 2026-09-14 已存在的 `.venv` 被 bootstrap fixture 复制而出现 1 个环境失败；未删除或修改该既有目录。
+- Skill validators：`skill-discovery`、`delegate-task`、`skill-engineer` 均为 `Skill is valid!`。
+- Markdown 本地链接检查：`24 checked, 0 broken`；归档前精确引用扫描为 0。
+- 原始 OpenSpace 工作区 4 个用户修改的 SHA-256 前后一致。
 
 ## E. Repository Topology Comparison
 
@@ -160,6 +185,7 @@ EVOLUTION_GOVERNANCE_PRESENT = YES
 DEPENDENCY_CONTRACT_REPRODUCIBLE = YES
 GOVERNANCE_INVARIANTS_VERIFIED = YES
 SIMPLIFICATION_PLAN_READY = YES
+SIMPLIFICATION_WAVE1_COMPLETE = YES
 HIGH_IMPACT_DECISIONS_PENDING = 3
 USER_CHANGES_PRESERVED = YES
 ```
