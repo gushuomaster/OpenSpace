@@ -42,9 +42,9 @@ Phase 3 wheels：
 
 | Scope | Result |
 |---|---|
-| OpenSpace full suite, isolated venv | `198 passed, 2 skipped` |
+| OpenSpace full suite, isolated venv | `202 passed, 2 skipped` |
 | skill-engineering full suite, isolated venv | `462 passed, 2 skipped` |
-| Candidate focused (`tests/cloud`) | `84 passed, 1 skipped` |
+| Candidate focused (`tests/cloud`) | `88 passed, 1 skipped` |
 | Cross-repository dependency contract | `5 passed` |
 | Evolution/staged authoring/continuation focused | `52 passed` |
 | OpenSpace wheel neutral import and PEP 610 smoke | PASS |
@@ -59,11 +59,13 @@ OpenSpace full 的 2 个 skip 分别是可选 Harbor/Terminal-Bench 环境未安
 
 `git merge-base --is-ancestor` 已逐项证明 Integration 基线 `1bbde7e`、continuation `7e0871b`、crash fail-closed `d9a8281`、runtime reuse `3efe735`、旧 dependency pin `76262da`、Dependency Publication Closure `30b30f6`、Wave 1 `b757efc` 与 Wave 2 implementation `3dba5a6` 全部位于当前 OpenSpace 本地候选 ancestry。没有使用 cherry-pick、rebase 或覆盖用户工作区完成整合。
 
+Phase 4 推送前独立审查发现并关闭了两个 Important 安全缺口：崩溃残留 install temporary namespace 的嵌套 Skill 可见性绕过，以及并发 Governance binding 竞争时失败调用删除赢家 binding。临时路径现在绑定完整 `candidate_id`，visibility 检查全部祖先，recovery 只清理当前 Candidate 的精确临时命名空间；binding 通过同目录完整临时文件和 exclusive hard link 原子发布，并执行 compare-before-delete 回滚。新增 4 条回归均先 RED 后 GREEN，复核结果为 Critical 0、Important 0、Ready to merge。
+
 ## Remaining Decisions
 
 本轮没有删除 direct-mutation 子图，没有改变公共 Governance API，也没有改变双仓库 topology。现有消费者证据仍支持：保留 Evolution 公共 facade、保留双仓库和 immutable pin；direct-mutation 仅在后续弃用证据和独立消费者审计完成后再评估删除。任何 topology、公共 API 删除或长期治理所有权变化仍需用户单独决策。
 
-残余风险仅包括：当前 Windows 主机无法执行 3 个独立 symlink 测试实例，可选 Harbor/Terminal-Bench gate 未运行；任务级自动重放仍明确不在范围内；3 个长期高影响架构决策仍待用户决定。这些事项不阻塞当前 PR 候选，但需要在对应平台或后续专项继续跟踪。
+残余风险仅包括：当前 Windows 主机无法执行 3 个独立 symlink 测试实例，可选 Harbor/Terminal-Bench gate 未运行；exclusive Governance binding 发布要求 Candidate state 所在文件系统支持 hard link，不支持时会安全失败；任务级自动重放仍明确不在范围内；3 个长期高影响架构决策仍待用户决定。这些事项不阻塞当前 PR 候选，但需要在对应平台或后续专项继续跟踪。
 
 ## Final Status
 
