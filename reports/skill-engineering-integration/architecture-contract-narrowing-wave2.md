@@ -55,6 +55,10 @@ Phase 3 wheels：
 
 OpenSpace full 的 2 个 skip 分别是可选 Harbor/Terminal-Bench 环境未安装，以及 Windows directory symlink privilege limitation（WinError 1314）；Candidate focused 的 1 个 skip 与后者重叠。skill-engineering full 的 2 个 skip 都是 Windows symlink privilege limitation。没有失败、xfail 或 collection error。
 
+## Unified Candidate Baseline
+
+`git merge-base --is-ancestor` 已逐项证明 Integration 基线 `1bbde7e`、continuation `7e0871b`、crash fail-closed `d9a8281`、runtime reuse `3efe735`、旧 dependency pin `76262da`、Dependency Publication Closure `30b30f6`、Wave 1 `b757efc` 与 Wave 2 implementation `3dba5a6` 全部位于当前 OpenSpace 本地候选 ancestry。没有使用 cherry-pick、rebase 或覆盖用户工作区完成整合。
+
 ## Remaining Decisions
 
 本轮没有删除 direct-mutation 子图，没有改变公共 Governance API，也没有改变双仓库 topology。现有消费者证据仍支持：保留 Evolution 公共 facade、保留双仓库和 immutable pin；direct-mutation 仅在后续弃用证据和独立消费者审计完成后再评估删除。任何 topology、公共 API 删除或长期治理所有权变化仍需用户单独决策。
