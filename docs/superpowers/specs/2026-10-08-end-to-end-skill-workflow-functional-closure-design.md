@@ -1,6 +1,6 @@
 # End-to-End Skill Workflow Functional Closure Design
 
-**Status:** Draft for review. The recommended approach was approved on 2026-10-08; implementation has not started.
+**Status:** Approved with review corrections on 2026-10-08; implementation may proceed under this corrected boundary.
 
 **Scope:** OpenSpace runtime and its declared `skill-engineering` dependency contract. The existing Candidate lifecycle and Evolution Governance lifecycle remain authoritative and are not redesigned.
 
@@ -134,7 +134,7 @@ The installer will reuse the same formal-path helper, eliminating duplicate path
 - `fix_skill()` evaluates the exact `skill_dir` before `register_skill_dir()` and returns a stable fail-closed error without creating evidence, TriggerJobs, Registry entries, or SkillStore records.
 - `install_candidate()` does not use the general admission callback. It remains the sole formal Candidate visibility transition and retains its receipt/digest checks.
 
-This closes the two audited external sinks without imposing Candidate semantics on all local Registry use or adding Governance to registration.
+The same admission callback is installed on canonical startup discovery as well as hot discovery. Startup `SkillStore.sync_from_registry()` therefore receives only admitted metadata. This closes the two audited MCP sinks and the startup Registry/SkillStore visibility boundary without imposing Candidate semantics on ordinary local Skills or adding Governance to registration.
 
 ### 4.5 Required behavior
 
@@ -155,6 +155,18 @@ Turn-0 local discovery returns no attachment when it finds no hit, and `Discover
 ### 5.2 Selected approach
 
 Use the existing Host/MCP tool loop as the orchestration boundary. A local miss becomes an explicit structured continuation; it does not become an internal autonomous import.
+
+The protocol and final report keep five milestones distinct:
+
+| Milestone | Meaning | What does not prove it |
+|---|---|---|
+| `LOCAL_MISS_CONTINUATION_AVAILABLE` | Local discovery returned zero candidates and exposed an explicit Cloud next action | `skills_used=[]` |
+| `CLOUD_DISCOVERY_EXECUTED` | The existing Cloud search API actually ran and returned its outcome | continuation metadata alone |
+| `CODEX_SELECTION_COMPLETED` | Codex supplied one exact `cloud_skill_id` to the acquisition continuation | first result position or server ranking |
+| `CANDIDATE_INSTALLED` | Receipt/digest revalidation completed and Candidate state reached `INSTALLED` | acquisition or Governance PASS alone |
+| `TASK_RESUMED_WITH_SKILL` | A subsequent invocation loaded the installed Skill through normal lookup/`SkillTool` and its exact content reached context | installation alone |
+
+No milestone is inferred from another unless the tested call chain directly observes both transitions.
 
 #### Turn-0 and `DiscoverSkillsTool`
 
@@ -199,15 +211,13 @@ Local hits retain the existing result payload and add no Cloud requirement.
 
 #### MCP `execute_task`
 
-Cloud search is deferred until after local execution metadata is available. It runs only when all are true:
+`execute_task` preserves its existing execution semantics. The existing optional Cloud search under `search_scope="all"` may execute, but the response reports `CLOUD_DISCOVERY_EXECUTED` separately from the local-miss continuation state.
 
-- `search_scope == "all"`;
-- the controlled Cloud client is available;
-- `result.skills_used` is empty.
+In particular, `result.skills_used == []` is only evidence that no Skill invocation was recorded. It is not evidence that the task needed a Cloud Skill, that local discovery produced no candidates, or that the task should be replayed. `LOCAL_MISS_CONTINUATION_AVAILABLE` comes only from the explicit turn-0/`DiscoverSkillsTool` local-miss signal.
 
-When candidates exist, the response carries `skill_resolution.status=cloud_discovery_required`, candidates, `selection_owner=codex`, and the existing explicit `cloud_browse_skills` continuation. When no candidates exist it reports `cloud_no_match`; when Cloud is unavailable it reports `cloud_unavailable` without failing local execution.
+When Cloud candidates exist, the response may expose them and the existing explicit `cloud_browse_skills` continuation, but it does not claim selection, acquisition, installation, task replay, or completion through a new Skill. When Cloud is unavailable or has no match, those are Cloud discovery outcomes rather than changes to the original task status.
 
-`execute_task` does not acquire a candidate, choose the first result, or synthesize a selected ID. Its existing task execution status and response remain intact, preserving callers that use tool-only fallback. Existing consumers that ignore added JSON fields remain compatible.
+`execute_task` does not acquire a candidate, choose the first result, synthesize a selected ID, or automatically resume the task. Existing task status and response remain intact, preserving callers that use tool-only fallback. Existing consumers that ignore added JSON fields remain compatible.
 
 ### 5.3 Explicit Codex boundary
 
@@ -222,6 +232,8 @@ local_miss
 ```
 
 Tests will assert that local miss and Cloud search never call import, never create Candidate state, and never register content. The existing two-stage Candidate tests continue to prove that acquisition alone is not visibility.
+
+The E2E test explicitly drives each continuation. If repository behavior proves only the protocol continuation rather than automatic task replay, the final classification reports protocol completion and leaves task-level automatic closure false. It must not upgrade `LOCAL_MISS_CONTINUATION_AVAILABLE` into `TASK_RESUMED_WITH_SKILL` without the subsequent real lookup and SkillTool evidence.
 
 ### 5.4 Host Skill alignment
 
@@ -294,7 +306,7 @@ Add one bounded startup function that enumerates only Candidates in `INSTALLING`
 
 For each record:
 
-1. Recompute Candidate identity, manifest digest, binding path/digest, expected formal path, and current bytes.
+1. Recompute Candidate identity, immutable manifest digest, formal-path ownership, quarantine payload digest, Governance binding, managed completion receipt identity/digest, expected formal path, and installed bytes digest.
 2. If the formal path is absent:
    - remove only exact-path/exact-ID partial Registry, SkillStore, and mapping state;
    - transition to `INSTALL_FAILED` with a recovery code.
@@ -312,6 +324,8 @@ If reconciliation itself is interrupted, state remains `INSTALLING` and the same
 
 The general hot-registration admission from section 4 independently rejects an `INSTALLING` formal path until reconciliation completes.
 
+Recovery tests must cover replaying the same recovery more than once, terminating recovery again mid-replay, corrupt state/manifest/binding, an occupied conflicting target directory, and exact protection of Registry/SkillStore/mapping/filesystem assets owned by another Candidate or local Skill.
+
 ### 7.4 Startup placement
 
 The MCP `_get_openspace()` initialization lock is the existing critical section:
@@ -324,7 +338,7 @@ OpenSpace.initialize()
   -> publish initialized MCP runtime
 ```
 
-Although initial Registry discovery may parse a crash-left formal directory, no external request can observe the runtime before reconciliation. Invalid or incomplete records are removed from Registry/SkillStore before `_get_openspace()` returns.
+Canonical startup discovery uses the section 4 admission policy, so a crash-left `INSTALLING` path is not admitted into Registry or startup SkillStore sync. Reconciliation can then finalize and explicitly register only matching bytes. No external request can observe the runtime before reconciliation and host-directory registration complete.
 
 ## 8. Install-to-Runtime Reuse Evidence
 
@@ -338,6 +352,7 @@ Add a real integration test with exact content markers:
 6. Search locally with the ordinary `SkillDiscoveryService` and find the installed Skill.
 7. Invoke the ordinary `SkillTool` for that Skill.
 8. Assert that the exact installed `SKILL.md` marker reaches the tool result/additional context boundary.
+9. Record this as an explicitly orchestrated `TASK_RESUMED_WITH_SKILL`; do not describe it as single-call or autonomous task replay.
 
 No production feature is added solely for this test. Any failure must be fixed at the first existing broken seam rather than by introducing an E2E-only API.
 
@@ -355,14 +370,17 @@ No production feature is added solely for this test. Any failure must be fixed a
 | Candidate/receipt/digest mismatch | `INTEGRITY_MISMATCH`; no visibility |
 | Crash before formal placement | reconcile to owned cleanup + `INSTALL_FAILED` |
 | Crash after matching formal placement | replay idempotently to `INSTALLED` |
-| Crash-left formal bytes do not match binding | remove visibility, retain evidence, `INTEGRITY_MISMATCH` |
+| Crash-left formal bytes do not match payload/binding/receipt | remove visibility, retain evidence, `INTEGRITY_MISMATCH` |
+| Recovery runs twice or is killed again | bounded idempotent replay; no duplicate/cross-owned mutation |
+| Managed record is corrupt or two Candidates claim one path | startup fails closed; no Registry/Store visibility |
+| Target path belongs to another Candidate/local Skill | preserve foreign assets and fail recovery |
 | Dependency pin/import mismatch in clean environment | fail smoke check; stop for dependency decision |
 
 ## 10. Compatibility
 
 - `import_skill` remains discoverable and acquisition-only.
 - `install_candidate` and the serialized Governance outcome contract are unchanged.
-- `execute_task` keeps its existing parameters, execution behavior, and top-level status. It only adds structured resolution fields and avoids unnecessary Cloud search after a local hit.
+- `execute_task` keeps its existing parameters, execution behavior, Cloud-search option, and top-level status. It adds structured milestone fields without using `skills_used=[]` as a need/escalation decision.
 - `search_skills` keeps existing local results and adds fields only on a miss.
 - Registry admission is an optional callback used by the audited MCP hot-registration path; unrelated Registry consumers retain current behavior.
 - Ordinary local Skill registration and repair remain supported.
@@ -377,7 +395,8 @@ Expected OpenSpace production changes:
 - `openspace/cloud/candidate_visibility.py` — narrow managed-artifact admission decision.
 - `openspace/cloud/candidate_recovery.py` — added only after the kill-point RED proves the inconsistent state.
 - `openspace/cloud/candidate_install.py` — reuse authoritative path helper; no Governance redesign.
-- `openspace/skill_engine/registry.py` — optional per-entry admission in hot discovery.
+- `openspace/skill_engine/registry.py` — optional per-entry admission in startup and hot discovery.
+- `openspace/runtime/skill_registry.py` and `openspace/runtime/app.py` — install the managed-artifact admission policy before canonical startup discovery and sync.
 - `openspace/skill_engine/protocol.py` — structured turn-0/tool local-miss signal.
 - `openspace/entrypoints/mcp/server.py` — admission at both audited sinks, conditional Cloud continuation, startup reconciliation.
 - `openspace/host_skills/skill-discovery/SKILL.md` and `openspace/host_skills/delegate-task/SKILL.md` — protocol documentation only.
@@ -386,7 +405,7 @@ Expected OpenSpace production changes:
 Expected tests:
 
 - focused visibility-admission tests for execute/hot registration and `fix_skill`;
-- local hit/miss and explicit Codex-selection boundary tests;
+- local hit/miss, milestone separation, and explicit Codex-selection boundary tests;
 - dependency declaration/import contract test;
 - subprocess crash kill-point and restart reconciliation tests;
 - Cloud Candidate to restart/runtime reuse E2E test;
@@ -419,7 +438,11 @@ NON_PASS_CANDIDATE_INSTALLABLE = NO
 TAMPERED_CANDIDATE_INSTALLABLE = NO
 GOVERNANCE_BYPASS_PATHS = 0
 LOCAL_SKILL_REUSE_COMPLETE = YES
-LOCAL_MISS_CLOUD_ESCALATION_COMPLETE = YES
+LOCAL_MISS_CONTINUATION_AVAILABLE = YES
+CLOUD_DISCOVERY_EXECUTED = YES | NO (report actual tested path)
+CODEX_SELECTION_COMPLETED = YES | NO (report actual tested path)
+CANDIDATE_INSTALLED = YES | NO (report actual tested path)
+TASK_RESUMED_WITH_SKILL = YES | NO (requires subsequent lookup/SkillTool evidence)
 INSTALL_TO_RUNTIME_REUSE_VERIFIED = YES
 RUNTIME_DEPENDENCY_ALIGNED = YES
 EVOLUTION_GOVERNANCE_PRESERVED = YES
