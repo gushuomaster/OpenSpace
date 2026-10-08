@@ -4,8 +4,9 @@
 
 ## Active
 
-当前权威报告：[`integration-baseline-consolidation-and-simplification-plan.md`](integration-baseline-consolidation-and-simplification-plan.md)
+当前权威报告：[`architecture-contract-narrowing-wave2.md`](architecture-contract-narrowing-wave2.md)
 
+- [`architecture-contract-narrowing-wave2.md`](architecture-contract-narrowing-wave2.md)：Wave 2 contract narrowing、本地集成、完整回归与 publication checkpoint。
 - [`integration-baseline-consolidation-and-simplification-plan.md`](integration-baseline-consolidation-and-simplification-plan.md)：当前集成基线、复杂度分类、简化进度和待决策事项。
 - [`candidate-governance-lifecycle-design.md`](candidate-governance-lifecycle-design.md)：Candidate Acquisition → Quarantine → Governance → Install 的架构边界与不变量。
 - [`end-to-end-functional-closure.md`](end-to-end-functional-closure.md)：显式 continuation、visibility admission、crash recovery 与 runtime reuse 的功能收口设计和证据。

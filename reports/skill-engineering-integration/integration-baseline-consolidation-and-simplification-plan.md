@@ -190,10 +190,16 @@ HIGH_IMPACT_DECISIONS_PENDING = 3
 USER_CHANGES_PRESERVED = YES
 ```
 
-`DEPENDENCY_CONTRACT_REPRODUCIBLE=YES` 基于全新环境、正式 Git URL、完整 SHA、禁用 wheel 构建缓存的实测；`INTEGRATION_BASELINE_COMPLETE=YES` 同时要求的 Candidate/Evolution focused regression 与 OpenSpace full suite 也已通过。仍有 3 个长期架构决策，但它们不阻塞当前集成基线：
+以上 Wave 1 的 `DEPENDENCY_CONTRACT_REPRODUCIBLE=YES` 与 `INTEGRATION_BASELINE_COMPLETE=YES` 是历史已发布 pin `1c1c442…` 的结论。Wave 2 已完成本地 exact-SHA 集成和完整回归，但新 revision 尚未推送，因此当前权威状态为 `REMOTE_DEPENDENCY_REPRODUCIBLE=PENDING`、`FINAL_INTEGRATION_BASELINE_READY=NO`。详细证据见 [`architecture-contract-narrowing-wave2.md`](architecture-contract-narrowing-wave2.md)。仍有 3 个长期架构决策，但它们不阻塞当前本地实现：
 
 1. skill-engineering 是否长期保持独立 repository；
 2. 独立 package/release 是否继续作为长期交付边界；
 3. 面向未知外部消费者的 public API 与 Production Readiness harness 保留范围。
 
 停止条件已满足：完成统一基线核对、证实的最小 packaging 修复、正式依赖发布与复现、真实功能与负向验证、架构复杂度复核和简化计划；未进入 merge、PR、release 或历史代码清理。
+
+## G. Architecture Contract Narrowing Wave 2
+
+Wave 2 已实施最小 contract narrowing：Candidate 使用 `engine.candidate_contract`，staged authoring 使用非 mutation forwarding entrypoints，Legacy、Evolution Governance、Candidate integrity 和 recovery 保持不变。真实 staging retry、exhaustion cleanup、full OpenSpace、full skill-engineering、validators、wheel smoke 和 `pip check` 均已通过；没有新增 journal、事务框架、治理平台或 Agent replay。
+
+当前本地提交为 OpenSpace `3dba5a68…` 与 skill-engineering `c0d4550…`。后者尚未发布到 GitHub，故不把本地 Git URL 验证冒充正式远端 reproducibility。下一步仅需获得明确的远端 push 授权，随后从正式 URL 和新 SHA 重做 dependency smoke，再更新最终基线状态。
